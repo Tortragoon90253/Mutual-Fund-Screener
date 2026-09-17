@@ -32,7 +32,10 @@ MAX_CALLS = int(os.environ.get("SEC_MAX_CALLS") or 8000)  # safety budget per ru
 AMC_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 WORKERS = max(1, min(8, int(os.environ.get("SEC_WORKERS") or 4)))  # endpoints downloaded at the same time
 # Compact search index: one array per share class instead of repeating key names 5,000 times
-INDEX_FIELDS = ["projId", "cls", "abbr", "nameTh", "nameEn", "policy", "retail", "tag", "amcId"]
+INDEX_FIELDS = ["projId", "cls", "abbr", "nameTh", "nameEn", "policy", "retail", "tag", "amcId", "aud"]
+# Share classes sold only to provident/private funds, unit-linked policies, institutions or large investors
+# (checked against all 4,923 real class descriptions, Sep 2026)
+RESTRICTED_CLASS = re.compile(r"(?:ให้บริการ|เสนอขาย)เฉพาะ(?:แก่)?ผู้ลงทุน(?!ทั่วไป)|ผู้ลงทุน(?:ที่เป็น|ประเภท)?\s*กองทุน|รับโอน(?:เงิน)?จากกองทุนสำรองเลี้ยงชีพ|กองทุน(?:รวม)?\s*(?:และ/หรือ)?\s*(?:กองทุน)?ส่วนบุคคลภายใต้|unit\s*-?\s*link|กรมธรรม์ประกันชีวิต|ความคุ้มครองจากบริษัทประกัน|บริษัทประกันชีวิต|ผู้ลงทุนรายใหญ่|ผู้มีเงินลงทุนสูง|สถาบัน\s*(?:ที่|ตามที่)\s*บริษัทจัดการ(?:กำหนด|จะประกาศ)|ผู้ถือหน่วยลงทุนที่เป็นกองทุน|สำหรับกองทุนสำรองเลี้ยงชีพ", re.I)
 
 
 class BudgetExceeded(Exception):
@@ -269,7 +272,8 @@ def main():
         amc_names[amc] = profile.get("comp_name_th") or amc_names.get(amc, "")
         amc_files.setdefault(amc, {})[f"{profile['proj_id']}|{cls}"] = fund
         s = sec.profile_summary(profile)
-        s.update(tag=class_tag(s["classDesc"]), amcId=amc, retail="" if s["retail"] == "R" else s["retail"])
+        s.update(tag=class_tag(s["classDesc"]), amcId=amc, retail="" if s["retail"] == "R" else s["retail"],
+                 aud="inst" if RESTRICTED_CLASS.search(f"{s['nameTh']} {s['classDesc']}") else "")
         index_items.append([s[k] or "" for k in INDEX_FIELDS])
     if failed:
         errors.append(f"แปลงข้อมูลไม่สำเร็จ {failed} รายการ")

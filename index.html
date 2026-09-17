@@ -71,6 +71,17 @@ legend{font-weight:600;padding:0 6px;font-size:.95rem}
 label.f.need input,label.f.need select{background:var(--warn-soft);border-color:var(--warn)}
 label.f.need{color:var(--warn)}
 label.f.check input,label.f.check select{border-color:var(--c-good);box-shadow:0 0 0 1px var(--c-good)}
+#recoBox{margin-top:14px;border-top:1px solid var(--border);padding-top:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.chips button{font:inherit;font-size:.86rem;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:4px 12px;border-radius:999px;cursor:pointer}
+.chips button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.chips button .n{opacity:.7;margin-left:4px}
+.reco-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border)}
+.reco-rank{font-weight:700;font-size:1.05rem;color:var(--muted);text-align:center;padding-top:2px}
+.reco-facts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.82rem;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+.reco-why{font-size:.84rem;margin-top:4px}
+.reco-why .good{color:var(--good)} .reco-why .warn{color:var(--warn)}
+.reco-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .form-legend{font-size:.85rem;color:var(--muted);margin:0 0 12px}
 .form-legend .lg{display:inline-block;padding:0 6px;border-radius:4px;font-weight:600}
 .form-legend .lg.need{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn)}
@@ -179,7 +190,9 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     <form class="row" id="secForm" style="display:none">
       <input id="secQ" placeholder="ชื่อย่อ / ชื่อกองทุน เช่น SCBS&P500, K-USXNDQ, ดิวิเดนด์" style="flex:1 1 240px">
       <button class="btn primary" type="submit">ค้นหา</button>
+      <button class="btn" type="button" id="btnReco">✨ แนะนำกองทุนตามโปรไฟล์</button>
     </form>
+    <div id="recoBox" hidden></div>
     <div id="secResults" style="margin-top:12px"></div>
   </div>
   <div class="card">

@@ -394,6 +394,7 @@ const amcCache = {};
 const AMC_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const NON_RETAIL = {A:'ขายเฉพาะผู้ลงทุนสถาบัน', B:'ขายเฉพาะผู้มีเงินลงทุนสูง', H:'ขายเฉพาะสถาบัน/ผู้มีเงินลงทุนสูง'};
 const RESULT_LIMIT = 50;
+const RESTRICTED_CLASS_RE = /(?:ให้บริการ|เสนอขาย)เฉพาะ(?:แก่)?ผู้ลงทุน(?!ทั่วไป)|ผู้ลงทุน(?:ที่เป็น|ประเภท)?\s*กองทุน|รับโอน(?:เงิน)?จากกองทุนสำรองเลี้ยงชีพ|กองทุน(?:รวม)?\s*(?:และ\/หรือ)?\s*(?:กองทุน)?ส่วนบุคคลภายใต้|unit\s*-?\s*link|กรมธรรม์ประกันชีวิต|ความคุ้มครองจากบริษัทประกัน|บริษัทประกันชีวิต|ผู้ลงทุนรายใหญ่|ผู้มีเงินลงทุนสูง|สถาบัน\s*(?:ที่|ตามที่)\s*บริษัทจัดการ(?:กำหนด|จะประกาศ)|ผู้ถือหน่วยลงทุนที่เป็นกองทุน|สำหรับกองทุนสำรองเลี้ยงชีพ/i;  // same rule as RESTRICTED_CLASS in sec_build.py
 
 async function secApi(path){
   const r = await fetch(path, {headers:{'X-Fund-Screener':'1'}, cache:'no-store'});
@@ -417,7 +418,8 @@ async function loadStatic(){
   j.items = raw.filter(it=>it && typeof it.projId==='string').map(it=>{
     const x = {projId:cleanStr(it.projId,40), cls:cleanStr(it.cls,60), abbr:cleanStr(it.abbr,60), nameTh:cleanStr(it.nameTh),
                nameEn:cleanStr(it.nameEn), policy:cleanStr(it.policy,100), retail:cleanStr(it.retail,2),
-               tag:cleanStr(it.tag || it.classDesc, 80), amcId:AMC_ID_RE.test(it.amcId)?it.amcId:''};
+               tag:cleanStr(it.tag, 80), amcId:AMC_ID_RE.test(it.amcId)?it.amcId:'',
+               aud: it.aud==='inst' || RESTRICTED_CLASS_RE.test(`${cleanStr(it.nameTh)} ${cleanStr(it.classDesc, 5000)}`) ? 'inst' : ''};
     x.amc = cleanStr(amcs[x.amcId]);
     x.hay = [x.abbr,x.cls,x.nameTh,x.nameEn,x.amc].join(' ').toLowerCase();
     return x;
@@ -456,7 +458,7 @@ async function secInit(){
 function renderSecResults(items, total){
   const more = total > items.length ? ` — แสดง ${items.length} รายการแรก พิมพ์ให้เจาะจงขึ้นเพื่อดูเพิ่ม` : '';
   $('#secResults').innerHTML = items.length ? `<p class="muted" style="margin:0 0 4px">พบ ${total.toLocaleString('th-TH')} รายการ${more}</p>` + items.map(it=>`<div class="sec-row">
-      <div><b>${esc(it.abbr)}${it.cls&&it.cls!=='main'?' · '+esc(it.cls):''}</b> ${NON_RETAIL[it.retail]?`<span class="tag">${NON_RETAIL[it.retail]}</span>`:''}
+      <div><b>${esc(it.abbr)}${it.cls&&it.cls!=='main'?' · '+esc(it.cls):''}</b> ${NON_RETAIL[it.retail]?`<span class="tag">${NON_RETAIL[it.retail]}</span>`:''}${it.aud==='inst'?'<span class="tag" title="ขายเฉพาะกองทุนสำรองเลี้ยงชีพ/กองทุนส่วนบุคคล/ประกันควบการลงทุน/สถาบัน">เฉพาะกลุ่ม</span>':''}
         <div class="meta">${esc(it.nameTh||it.nameEn)}</div>
         <div class="meta">${esc(it.amc)}${it.policy?' · '+esc(it.policy):''}${it.tag?' · '+esc(it.tag):''}</div></div>
       <button class="btn small primary" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}">เพิ่ม</button></div>`).join('')
@@ -488,31 +490,199 @@ $('#secForm').addEventListener('submit', async e=>{
   }
   catch(err){ box.innerHTML = `<div class="callout warn">${esc(err.message)}</div>`; }
 });
-async function secFetchFund(projId, cls){
-  if (secMode==='static'){
-    const it = secStatic.items.find(x=>x.projId===projId && x.cls===(cls||''));
-    if (!it || !it.amcId) throw new Error('ไม่พบกองนี้ในข้อมูลล่าสุด');
-    if (!amcCache[it.amcId]) amcCache[it.amcId] = await getJson(`data/funds/${encodeURIComponent(it.amcId)}.json`);
-    const items = amcCache[it.amcId] && amcCache[it.amcId].items;
-    const fund = items && Object.prototype.hasOwnProperty.call(items, `${projId}|${cls||''}`) ? items[`${projId}|${cls||''}`] : null;
-    if (!fund) throw new Error('ไม่พบข้อมูลรายละเอียดของกองนี้');
-    return fund;
-  }
+async function loadAmc(amcId){
+  if (!AMC_ID_RE.test(amcId)) throw new Error('รหัส บลจ. ไม่ถูกต้อง');
+  if (!amcCache[amcId]) amcCache[amcId] = getJson(`data/funds/${encodeURIComponent(amcId)}.json`).catch(e=>{ delete amcCache[amcId]; throw e; });
+  return amcCache[amcId];
+}
+async function staticFund(projId, cls){
+  const it = secStatic && secStatic.items.find(x=>x.projId===projId && x.cls===(cls||''));
+  if (!it || !it.amcId) throw new Error('ไม่พบกองนี้ในข้อมูลล่าสุด');
+  const items = (await loadAmc(it.amcId)).items || {};
+  const key = `${projId}|${cls||''}`;
+  if (!Object.prototype.hasOwnProperty.call(items, key)) throw new Error('ไม่พบข้อมูลรายละเอียดของกองนี้');
+  return items[key];
+}
+async function secFetchFund(projId, cls, source){
+  if (secMode==='static' || source==='static') return staticFund(projId, cls);
   const {fund} = await secApi(`api/fund?proj_id=${encodeURIComponent(projId)}&cls=${encodeURIComponent(cls||'')}`);
   return fund;
 }
-$('#secResults').addEventListener('click', async e=>{
-  const b = e.target.closest('[data-secadd]'); if (!b) return;
+async function addSecFund(b){
   const projId = b.dataset.secadd, cls = b.dataset.seccls;
   if (state.funds.some(f=>f.sec && f.sec.projId===projId && f.sec.cls===cls) && !confirm('กองนี้มีอยู่แล้ว ต้องการเพิ่มซ้ำหรือไม่?')) return;
   b.disabled = true; b.textContent = 'กำลังดึง…';
   try{
-    const fund = await secFetchFund(projId, cls);
+    const fund = await secFetchFund(projId, cls, b.dataset.secsrc);
     const rec = sanitizeFund({...DEFAULT_FUND, ...fund, id:uid(), sample:false}); if (!rec) throw new Error('ข้อมูลกองทุนไม่ครบ');
     state.funds.push(rec); save(); renderFunds();
     b.textContent = 'เพิ่มแล้ว ✓';
     fillForm(rec); $('#fundForm').scrollIntoView({behavior:'smooth'});
   }catch(err){ b.disabled=false; b.textContent='เพิ่ม'; alert('ดึงข้อมูลไม่สำเร็จ: '+err.message); }
+}
+$('#secResults').addEventListener('click', e=>{ const b = e.target.closest('[data-secadd]'); if (b) addSecFund(b); });
+
+/* ============ Recommendations ============
+   Scores every share class in the SEC data set with the same 8-criteria engine used in tab ③,
+   after removing funds an ordinary investor cannot or should not compare (institution-only,
+   fixed-term, too little data), then slices the result into advice-oriented shortlists. */
+let recoData = null, recoTab = 'top', recoProfileKey = '';
+const RECO_SIZE = 10;
+const NON_RETAIL_CODES = ['A','B','H'];
+const profileKey = () => JSON.stringify([state.profile.goal, state.profile.years, state.profile.riskTol, state.profile.mode, state.profile.monthly, state.weights]);
+
+function looksFixedTerm(it, f){
+  if (typeof f.fixedTerm === 'boolean') return f.fixedTerm;  // provided by data built after this feature
+  return /\d+\/\d{2}\b/.test(it.abbr + ' ' + it.nameTh) || /\d+M\d*\b/.test(it.abbr);
+}
+function dataGaps(f){
+  const gaps = [];
+  if (!has(f.riskLevel)) gaps.push('ระดับความเสี่ยง');
+  if (!has(f.ter) || num(f.ter)<=0) gaps.push('TER');
+  if (!has(f.ret1) && !has(f.ret3) && !has(f.ret5)) gaps.push('ผลตอบแทนย้อนหลัง');
+  if (!has(f.maxDD)) gaps.push('Max Drawdown');
+  if (!has(f.aum)) gaps.push('ขนาดกอง');
+  return gaps;
+}
+async function ensureStaticData(){
+  if (secStatic) return secStatic;
+  secStatic = await loadStatic();   // live mode: works when the local data/ folder exists (py sec_build.py)
+  return secStatic;
+}
+async function buildRecommendations(progress){
+  await ensureStaticData();
+  const amcIds = [...new Set(secStatic.items.map(it=>it.amcId).filter(Boolean))];
+  let done = 0;
+  // download the AMC files a few at a time
+  const queue = amcIds.slice();
+  await Promise.all(Array.from({length:4}, async ()=>{
+    while (queue.length){ const id = queue.shift(); await loadAmc(id); progress(++done, amcIds.length); }
+  }));
+
+  const p = state.profile, tol = num(p.riskTol, 6);
+  const excluded = {nonRetail:0, fixedTerm:0, gaps:0, failed:0};
+  const growthGoal = ['wealth','retire','tax'].includes(p.goal) && num(p.years)>=5;
+  const GROWTH = ['global_equity','thai_equity','mixed','reit'];
+  const rows = [];
+  for (const it of secStatic.items){
+    const raw = ((await loadAmc(it.amcId)).items || {})[`${it.projId}|${it.cls}`];
+    if (!raw) continue;
+    if (NON_RETAIL_CODES.includes(it.retail) || it.aud==='inst'){ excluded.nonRetail++; continue; }
+    const f = sanitizeFund({...DEFAULT_FUND, ...raw, id:'reco0000'});
+    if (!f) continue;
+    if (looksFixedTerm(it, raw)){ excluded.fixedTerm++; continue; }
+    const gaps = dataGaps(f);
+    if (gaps.length > 1 || gaps.includes('ระดับความเสี่ยง') || gaps.includes('TER')){ excluded.gaps++; continue; }
+    const e = evaluate(f, p);
+    if (!e.pass){ excluded.failed++; continue; }
+    const beats = [['ret1','bm1'],['ret3','bm3'],['ret5','bm5']].filter(([a,b])=>has(f[a]) && has(f[b]));
+    rows.push({it, f, e, gaps,
+      excess: beats.length ? beats.reduce((t,[a,b])=>t+num(f[a])-num(f[b]),0)/beats.length : null,
+      beatsAll: beats.length===3 && beats.every(([a,b])=>num(f[a])>=num(f[b]))});
+  }
+  const byScore = (a,b)=> b.e.total-a.e.total || a.gaps.length-b.gaps.length || num(a.f.ter,9)-num(b.f.ter,9) || num(b.f.aum)-num(a.f.aum);
+  // one share class per fund, so a single fund cannot fill a whole list
+  const onePerFund = list => { const seen = new Set(); return list.filter(r=>!seen.has(r.it.projId) && seen.add(r.it.projId)); };
+  const ranked = onePerFund(rows.slice().sort(byScore));
+
+  const cats = [];
+  if (p.goal==='tax') cats.push({k:'tax', label:'ลดหย่อนภาษี',
+    desc:'กอง SSF / RMF / Thai ESG ที่ผ่านเกณฑ์ เรียงตามคะแนนรวม' + (growthGoal ? ' — ถือยาวหลายปีจึงคัดเฉพาะสินทรัพย์เติบโต (หุ้น/ผสม/REIT)' : ''),
+    list: ranked.filter(r=>r.f.taxType!=='none' && (!growthGoal || GROWTH.includes(r.f.assetClass)))});
+  if (p.goal==='income') cats.push({k:'income', label:'จ่ายปันผล', desc:'กองที่มีนโยบายจ่ายเงินปันผล เหมาะกับเป้าหมายกระแสเงินสด',
+    list: ranked.filter(r=>r.f.dividend==='yes')});
+  // A long-term growth goal should not be topped by short-term bond funds just because they are cheap and calm;
+  // a short-term goal should not be topped by equity funds.
+  const topList = growthGoal ? ranked.filter(r=>GROWTH.includes(r.f.assetClass))
+                : p.goal==='short' ? ranked.filter(r=>['bond','money_market'].includes(r.f.assetClass)) : ranked;
+  const topNote = growthGoal ? ' — เป้าหมายระยะยาวจึงคัดเฉพาะสินทรัพย์เติบโต (หุ้น/ผสม/REIT) ส่วนตราสารหนี้ดูในหมวด "เสี่ยงต่ำกว่าที่รับได้"'
+                : p.goal==='short' ? ' — เป้าหมายระยะสั้นจึงคัดเฉพาะตราสารหนี้และตลาดเงิน' : '';
+  cats.push({k:'top', label:'เหมาะกับโปรไฟล์ที่สุด', desc:'คะแนนรวมสูงสุดตามเกณฑ์ 8 ข้อและน้ำหนักที่ตั้งไว้ในแท็บ ③'+topNote, list: topList});
+  cats.push({k:'cheap', label:'ค่าธรรมเนียมต่ำ', desc:'คะแนนรวมตั้งแต่ 60 ขึ้นไป เรียงตาม TER จากต่ำไปสูง — ต้นทุนที่แน่นอนที่สุดในระยะยาว'+(growthGoal?' (เฉพาะสินทรัพย์เติบโต)':''),
+    list: onePerFund(rows.filter(r=>r.e.total>=60 && num(r.f.ter)>0 && (!growthGoal || GROWTH.includes(r.f.assetClass))).sort((a,b)=>num(a.f.ter)-num(b.f.ter) || byScore(a,b)))});
+  cats.push({k:'consistent', label:'ชนะดัชนีสม่ำเสมอ', desc:'ผลตอบแทนไม่แพ้ดัชนีชี้วัดทั้ง 1, 3 และ 5 ปี เรียงตามส่วนต่างเฉลี่ย',
+    list: onePerFund(rows.filter(r=>r.beatsAll).sort((a,b)=>b.excess-a.excess || byScore(a,b)))});
+  cats.push({k:'safer', label:'เสี่ยงต่ำกว่าที่รับได้', desc:`ระดับความเสี่ยงไม่เกิน ${Math.max(1,tol-2)} (ต่ำกว่าที่รับได้ 2 ระดับ) สำหรับส่วนที่ต้องการความมั่นคง`,
+    list: ranked.filter(r=>num(r.f.riskLevel)<=Math.max(1,tol-2))});
+  const perAsset = [];
+  Object.keys(ASSET).forEach(k=>perAsset.push(...ranked.filter(r=>r.f.assetClass===k).slice(0,2)));
+  cats.push({k:'asset', label:'ดีสุดแต่ละประเภทสินทรัพย์', desc:'2 อันดับแรกของแต่ละประเภท — ใช้เป็นจุดเริ่มต้นจัดพอร์ตแบบกระจายความเสี่ยง', list: perAsset, keepOrder:true});
+
+  return {cats, excluded, candidates: rows.length, total: secStatic.items.length, generated: secStatic.generated};
+}
+
+function renderRecommendations(){
+  const box = $('#recoBox');
+  const d = recoData; if (!d) return;
+  const cat = d.cats.find(c=>c.k===recoTab) || d.cats[0]; recoTab = cat.k;
+  const list = cat.keepOrder ? cat.list : cat.list.slice(0, RECO_SIZE);
+  const p = state.profile, goalText = $('[data-p=goal]').selectedOptions[0].text;
+  const stale = profileKey() !== recoProfileKey;
+  const ex = d.excluded;
+  box.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div><b>แนะนำตามโปรไฟล์</b> <span class="muted">· ${esc(goalText)} · ${esc(p.years)} ปี · รับความเสี่ยงได้ระดับ ${esc(p.riskTol)}</span></div>
+      <button class="btn small" type="button" id="btnRecoClose">ซ่อน</button>
+    </div>
+    ${stale ? '<div class="callout warn">โปรไฟล์หรือน้ำหนักคะแนนเปลี่ยนไปแล้ว — กด "แนะนำกองทุนตามโปรไฟล์" อีกครั้งเพื่อคำนวณใหม่</div>' : ''}
+    <div class="chips" role="tablist">${d.cats.map(c=>`<button type="button" data-reco-tab="${c.k}" class="${c.k===cat.k?'active':''}">${esc(c.label)}<span class="n">${c.keepOrder?c.list.length:Math.min(RECO_SIZE,c.list.length)}</span></button>`).join('')}</div>
+    <p class="sub" style="margin:0 0 4px">${esc(cat.desc)}</p>
+    ${list.length ? list.map((r,i)=>recoRow(r, cat.keepOrder ? ASSET[r.f.assetClass].label : i+1, cat.keepOrder)).join('')
+      : '<p class="muted">ไม่มีกองที่เข้าเงื่อนไขในหมวดนี้ — ลองปรับโปรไฟล์หรือดูหมวดอื่น</p>'}
+    <p class="muted" style="font-size:.8rem;margin:10px 0 0">
+      คัดจาก ${d.candidates.toLocaleString('th-TH')} ชนิดหน่วยลงทุนที่ผ่านเกณฑ์ (ทั้งหมด ${d.total.toLocaleString('th-TH')}) ·
+      ตัดออก: ไม่ผ่านเกณฑ์โปรไฟล์ ${ex.failed.toLocaleString('th-TH')} · ข้อมูลไม่พอ ${ex.gaps.toLocaleString('th-TH')} ·
+      กองมีกำหนดอายุ ${ex.fixedTerm.toLocaleString('th-TH')} · ชนิดเฉพาะกลุ่ม (สถาบัน/กองทุนสำรองเลี้ยงชีพ/ประกันควบการลงทุน) ${ex.nonRetail.toLocaleString('th-TH')} ·
+      แสดงชนิดหน่วยลงทุนที่ดีที่สุดกองละ 1 ชนิด<br>
+      ผลนี้เป็นการจัดอันดับตามเกณฑ์ของโปรแกรมจากข้อมูล Fact Sheet ไม่ใช่คำแนะนำการลงทุนเฉพาะบุคคล ผลตอบแทนในอดีตไม่รับประกันอนาคต — อ่านหนังสือชี้ชวนก่อนตัดสินใจ
+    </p>`;
+}
+function recoRow(r, rank, isLabel){
+  const f = r.f, it = r.it, e = r.e;
+  const pctv = v => has(v) ? `${num(v).toFixed(2)}%` : '–';
+  const ret = has(f.ret5) ? ['5 ปี', f.ret5, f.bm5] : has(f.ret3) ? ['3 ปี', f.ret3, f.bm3] : ['1 ปี', f.ret1, f.bm1];
+  const goods = CRIT.flatMap(c=>e.crit[c.k].score>=80 ? e.crit[c.k].reasons.filter(x=>x.lvl==='good').slice(0,1) : []).slice(0,2);
+  const warns = CRIT.flatMap(c=>e.crit[c.k].reasons.filter(x=>x.lvl!=='good')).filter(x=>!x.t.includes('จำนวนหลักทรัพย์') && !x.t.includes('ประมาณการค่าใช้จ่าย')).slice(0,2);
+  return `<div class="reco-row">
+    <div class="reco-rank" ${isLabel?'style="font-size:.72rem;line-height:1.2"':''}>${esc(rank)}</div>
+    <div>
+      <b>${esc(it.abbr)}${it.cls && it.cls!=='main' ? ' · '+esc(it.cls) : ''}</b>
+      ${f.taxType!=='none' ? `<span class="tag sec">${esc(TAX[f.taxType])}</span>` : ''}${it.tag ? ` <span class="tag">${esc(it.tag)}</span>` : ''}
+      <div class="meta muted" style="font-size:.84rem">${esc(it.nameTh || it.nameEn)} · ${esc(it.amc)}</div>
+      <div class="reco-facts">
+        <span>${esc(ASSET[f.assetClass].label)}</span><span>เสี่ยง ${esc(f.riskLevel)}</span><span>TER ${pctv(f.ter)}</span>
+        <span>ผลตอบแทน ${ret[0]} ${pctv(ret[1])}${has(ret[2]) ? ` (ดัชนี ${pctv(ret[2])})` : ''}</span>
+        <span>ขาดทุนสูงสุด ${has(f.maxDD) ? '−'+num(f.maxDD).toFixed(1)+'%' : '–'}</span>
+        <span>ขนาด ${has(f.aum) ? Math.round(num(f.aum)).toLocaleString('th-TH')+' ลบ.' : '–'}</span>
+      </div>
+      <div class="reco-why">${goods.map(x=>`<span class="good">✓ ${esc(x.t)}</span>`).join(' · ')}${goods.length && warns.length ? '<br>' : ''}${warns.map(x=>`<span class="warn">! ${esc(x.t)}</span>`).join(' · ')}</div>
+    </div>
+    <div class="reco-side">
+      <span class="grade ${cls(e.total)}" title="คะแนนรวม ${e.total}">${esc(e.grade)}</span>
+      <span class="muted" style="font-size:.8rem">${e.total} คะแนน</span>
+      <button class="btn small primary" type="button" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}" data-secsrc="static">เพิ่ม</button>
+    </div>
+  </div>`;
+}
+$('#btnReco').addEventListener('click', async ()=>{
+  const box = $('#recoBox'), btn = $('#btnReco');
+  box.hidden = false; btn.disabled = true;
+  box.innerHTML = '<p class="muted">กำลังเตรียมข้อมูล…</p>';
+  try{
+    recoProfileKey = profileKey();
+    recoData = await buildRecommendations((n, total)=>{ box.innerHTML = `<p class="muted">กำลังโหลดข้อมูลกองทุน ${n}/${total} บลจ.…</p>`; });
+    if (!recoData.cats.find(c=>c.k===recoTab)) recoTab = recoData.cats[0].k;
+    if (['tax','income'].includes(recoData.cats[0].k)) recoTab = recoData.cats[0].k;
+    renderRecommendations();
+  }catch(err){
+    box.innerHTML = `<div class="callout warn">ยังใช้การแนะนำไม่ได้: ต้องมีชุดข้อมูลทุกกองจาก ก.ล.ต. (มีบนเว็บ GitHub Pages หรือรัน <code>py sec_build.py</code> บนเครื่องก่อน) — ${esc(err.message)}</div>`;
+  }finally{ btn.disabled = false; }
+});
+$('#recoBox').addEventListener('click', e=>{
+  const tab = e.target.closest('[data-reco-tab]');
+  if (tab){ recoTab = tab.dataset.recoTab; renderRecommendations(); return; }
+  if (e.target.id==='btnRecoClose'){ $('#recoBox').hidden = true; return; }
+  const b = e.target.closest('[data-secadd]'); if (b) addSecFund(b);
 });
 
 $('#fundList').addEventListener('click', async e=>{

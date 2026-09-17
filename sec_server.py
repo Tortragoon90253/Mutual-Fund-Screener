@@ -369,6 +369,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "hedge": map_hedge(profile, stats, region),
         "dividend": "yes" if div_rows and str(div_rows[0].get("dividend_policy")).upper() == "Y" else "no",
         "minHold": min_hold or "",
+        "fixedTerm": str(profile.get("proj_term_flag") or "").upper() == "Y",  # term funds: excluded from recommendations
     }
     fund.update(map_fees(fee_rows, gen_fee_rows, notes))
     fund.update(map_performance(perf_rows))
