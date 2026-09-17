@@ -2,7 +2,7 @@ name: Update fund data & deploy site
 
 on:
   schedule:
-    - cron: "0 20 * * *"   # every day 03:00 Thailand time (20:00 UTC)
+    - cron: "0 20 * * 6"   # every Sunday 03:00 Thailand time (Sat 20:00 UTC) — fact sheets change monthly
   workflow_dispatch:        # "Run workflow" button in the Actions tab
   push:
     branches: [main]
@@ -21,47 +21,71 @@ concurrency:
   group: fund-data
   cancel-in-progress: false
 
+env:
+  # Repository variables (Settings → Secrets and variables → Actions → Variables), all optional:
+  #   DATA_MODE      all (default) | watchlist
+  #   SEC_MAX_CALLS  API call budget per run (default 8000)
+  DATA_MODE: ${{ vars.DATA_MODE || 'all' }}
+  SEC_MAX_CALLS: ${{ vars.SEC_MAX_CALLS || '8000' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     permissions:
-      contents: write          # commit data/funds.json back to the repo
+      contents: write          # force-push the generated data to the `data` branch
     outputs:
       data_ok: ${{ steps.data.outcome == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Load previous data (data branch)
+        run: |
+          mkdir -p data-branch
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch --depth=1 origin data
+            git archive FETCH_HEAD | tar -x -C data-branch
+            echo "Previous data: $(ls data-branch | tr '\n' ' ')"
+          else
+            echo "No data branch yet (first run)."
+          fi
+
       - name: Fetch data from SEC Open API
         id: data
-        continue-on-error: true  # still deploy the site (manual-entry mode) if the key is missing or the API is down
+        continue-on-error: true  # still deploy the site (with previous data / manual mode) if this fails
         env:
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
           SEC_API_KEY_SECONDARY: ${{ secrets.SEC_API_KEY_SECONDARY }}
-        run: python3 sec_build.py
+        run: python3 sec_build.py --mode "$DATA_MODE" --out data-branch
 
-      - name: Commit updated data
-        if: steps.data.outcome == 'success'
+      - name: Publish data branch (single commit, no history growth)
+        if: steps.data.outcome == 'success' && steps.data.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ github.token }}
         run: |
-          git add data/funds.json 2>/dev/null || exit 0
-          if git diff --staged --quiet; then
-            echo "No data changes."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-            git commit -m "Update fund data $(date -u +%Y-%m-%d)"
-            git pull --rebase --quiet
-            git push
-          fi
+          tmp="$(mktemp -d)"
+          cp -r data-branch/. "$tmp/"
+          cd "$tmp"
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Fund data $(date -u +%Y-%m-%dT%H:%MZ)"
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force "https://github.com/${GITHUB_REPOSITORY}.git" data
 
       - name: Assemble public site (page files only)
         run: |
           mkdir -p _site/vendor
           cp index.html app.js _site/
           cp vendor/chart.umd.min.js _site/vendor/
-          if [ -f data/funds.json ]; then mkdir -p _site/data && cp data/funds.json _site/data/; fi
-          ls -R _site
+          if [ -f data-branch/index.json ]; then
+            mkdir -p _site/data && cp -r data-branch/index.json data-branch/funds _site/data/
+          fi
+          du -sh _site
+          find _site -maxdepth 2 -type f | head -20
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -85,5 +109,5 @@ jobs:
       - name: Report data problems
         if: needs.build.outputs.data_ok != 'true'
         run: |
-          echo "::error::The site was deployed, but fetching SEC data failed. Open the 'Fetch data from SEC Open API' step log (usually a missing or wrong SEC_API_KEY secret)."
+          echo "::error::The site was deployed (with previous data if any), but fetching SEC data failed. Open the 'Fetch data from SEC Open API' step log — usually a missing/wrong SEC_API_KEY secret or the API call budget."
           exit 1

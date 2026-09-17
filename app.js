@@ -372,19 +372,38 @@ function renderFunds(){
 /* ============ SEC Open API data ============
    Two sources, tried in order:
    1. "live"   — local sec_server.py (start.bat) calls api.sec.or.th with your key
-   2. "static" — data/funds.json built by GitHub Actions (GitHub Pages), no key in the browser */
+   2. "static" — data/index.json + data/funds/<AMC>.json built by GitHub Actions (GitHub Pages);
+                 the browser never sees a key */
 let secReady = false, secMode = null, secStatic = null;
+const amcCache = {};
+const AMC_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const NON_RETAIL = {A:'ขายเฉพาะผู้ลงทุนสถาบัน', B:'ขายเฉพาะผู้มีเงินลงทุนสูง', H:'ขายเฉพาะสถาบัน/ผู้มีเงินลงทุนสูง'};
+const RESULT_LIMIT = 50;
+
 async function secApi(path){
   const r = await fetch(path, {headers:{'X-Fund-Screener':'1'}, cache:'no-store'});
   const j = await r.json().catch(()=>({error:'เซิร์ฟเวอร์ตอบกลับผิดรูปแบบ'}));
   if (!r.ok) throw new Error(j.error || ('HTTP '+r.status));
   return j;
 }
-async function loadStatic(){
-  const r = await fetch('data/funds.json', {cache:'no-store'});
+async function getJson(url){
+  const r = await fetch(url, {cache:'no-cache'});
   if (!r.ok) throw new Error('HTTP '+r.status);
-  const j = await r.json();
+  return r.json();
+}
+async function loadStatic(){
+  const j = await getJson('data/index.json');
   if (!j || !Array.isArray(j.items)) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+  const amcs = (j.amcs && typeof j.amcs==='object') ? j.amcs : {};
+  // pre-compute a lowercase search string per share class
+  j.items = j.items.filter(it=>it && typeof it.projId==='string').map(it=>{
+    const x = {projId:cleanStr(it.projId,40), cls:cleanStr(it.cls,60), abbr:cleanStr(it.abbr,60), nameTh:cleanStr(it.nameTh),
+               nameEn:cleanStr(it.nameEn), policy:cleanStr(it.policy,100), retail:cleanStr(it.retail,2),
+               classDesc:cleanStr(it.classDesc), amcId:AMC_ID_RE.test(it.amcId)?it.amcId:''};
+    x.amc = cleanStr(amcs[x.amcId]);
+    x.hay = [x.abbr,x.cls,x.nameTh,x.nameEn,x.amc].join(' ').toLowerCase();
+    return x;
+  });
   return j;
 }
 async function secInit(){
@@ -393,6 +412,7 @@ async function secInit(){
     status.textContent = 'เปิดแบบไฟล์ธรรมดาอยู่ — ใช้กรอกข้อมูลเองได้ ถ้าต้องการข้อมูลจาก ก.ล.ต. ให้เปิดผ่าน start.bat หรือเว็บ GitHub Pages';
     return;
   }
+  let noKeyMsg = '';
   try{
     const h = await secApi('api/health');
     if (h.hasKey){
@@ -401,47 +421,60 @@ async function secInit(){
       $('#secQ').placeholder = 'ชื่อย่อ / ชื่อกองทุน เช่น SCBS&P500';
       $('#secForm').style.display = 'flex'; renderFunds(); return;
     }
-    status.textContent = 'เชื่อมต่อเซิร์ฟเวอร์แล้ว แต่ยังไม่มี API Key — ใส่คีย์ในไฟล์ sec-config.json แล้วรีเฟรชหน้านี้';
-  }catch(e){ /* no local server: try the prebuilt data file */ }
+    noKeyMsg = 'เชื่อมต่อเซิร์ฟเวอร์แล้ว แต่ยังไม่มี API Key — ใส่คีย์ในไฟล์ sec-config.json แล้วรีเฟรชหน้านี้';
+  }catch(e){ /* no local server: use the prebuilt data */ }
   try{
     secStatic = await loadStatic();
     secMode = 'static'; secReady = true;
     const when = secStatic.generated ? new Date(secStatic.generated).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
-    status.textContent = `ข้อมูลจาก ก.ล.ต. ${secStatic.items.length} รายการ · อัปเดตล่าสุด ${when} — ค้นหาได้เฉพาะกองในรายการติดตาม (watchlist.txt)`;
-    $('#secQ').placeholder = 'ค้นหาในรายการ หรือกดค้นหาเพื่อดูทั้งหมด';
+    const scope = secStatic.mode==='watchlist' ? 'เฉพาะกองในรายการติดตาม' : 'ทุกกองที่เปิดขาย';
+    status.textContent = `ข้อมูลจาก ก.ล.ต. ${secStatic.items.length.toLocaleString('th-TH')} ชนิดหน่วยลงทุน (${scope}) · อัปเดตล่าสุด ${when}`;
+    $('#secQ').placeholder = 'ชื่อย่อ / ชื่อกองทุน / บลจ. เช่น S&P500, ปันผล, กสิกร';
     $('#secForm').style.display = 'flex'; renderFunds();
   }catch(e){
-    if (secMode===null && !status.textContent.includes('API Key')) status.textContent = 'ยังไม่มีข้อมูลจาก ก.ล.ต. — กรอกข้อมูลเองได้ตามปกติ';
+    status.textContent = noKeyMsg || 'ยังไม่มีข้อมูลจาก ก.ล.ต. — กรอกข้อมูลเองได้ตามปกติ';
   }
 }
-function renderSecResults(items){
-  const NON_RETAIL = {A:'ขายเฉพาะผู้ลงทุนสถาบัน', B:'ขายเฉพาะผู้มีเงินลงทุนสูง', H:'ขายเฉพาะสถาบัน/ผู้มีเงินลงทุนสูง'};
-  $('#secResults').innerHTML = items.length ? `<p class="muted" style="margin:0 0 4px">พบ ${items.length} รายการ</p>` + items.map(it=>`<div class="sec-row">
+function renderSecResults(items, total){
+  const more = total > items.length ? ` — แสดง ${items.length} รายการแรก พิมพ์ให้เจาะจงขึ้นเพื่อดูเพิ่ม` : '';
+  $('#secResults').innerHTML = items.length ? `<p class="muted" style="margin:0 0 4px">พบ ${total.toLocaleString('th-TH')} รายการ${more}</p>` + items.map(it=>`<div class="sec-row">
       <div><b>${esc(it.abbr)}${it.cls&&it.cls!=='main'?' · '+esc(it.cls):''}</b> ${NON_RETAIL[it.retail]?`<span class="tag">${NON_RETAIL[it.retail]}</span>`:''}
         <div class="meta">${esc(it.nameTh||it.nameEn)}</div>
         <div class="meta">${esc(it.amc)}${it.policy?' · '+esc(it.policy):''}${it.classDesc?' · '+esc(it.classDesc):''}</div></div>
       <button class="btn small primary" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}">เพิ่ม</button></div>`).join('')
     : '<p class="muted">ไม่พบกองทุน — ลองใช้ชื่อย่อหรือคำอื่น</p>';
 }
+function searchStatic(q){
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = secStatic.items.filter(it=>words.every(w=>it.hay.includes(w)));
+  const ql = q.toLowerCase();
+  const rank = it => (it.abbr.toLowerCase()===ql || it.cls.toLowerCase()===ql) ? 0
+                   : (it.abbr.toLowerCase().startsWith(ql) || it.cls.toLowerCase().startsWith(ql)) ? 1 : 2;
+  hits.sort((a,b)=>rank(a)-rank(b) || a.abbr.localeCompare(b.abbr) || a.cls.localeCompare(b.cls));
+  return hits;
+}
 $('#secForm').addEventListener('submit', async e=>{
   e.preventDefault();
   const q = $('#secQ').value.trim(), box = $('#secResults');
+  if (q.length<2){ box.innerHTML='<p class="muted">พิมพ์อย่างน้อย 2 ตัวอักษร</p>'; return; }
   if (secMode==='static'){
-    const needle = q.toLowerCase();
-    renderSecResults(secStatic.items.filter(it=>!needle || [it.abbr,it.cls,it.nameTh,it.nameEn,it.amc].some(s=>String(s||'').toLowerCase().includes(needle))));
+    const hits = searchStatic(q);
+    renderSecResults(hits.slice(0, RESULT_LIMIT), hits.length);
     return;
   }
-  if (q.length<2){ box.innerHTML='<p class="muted">พิมพ์อย่างน้อย 2 ตัวอักษร</p>'; return; }
   box.innerHTML = '<p class="muted">กำลังค้นหา…</p>';
-  try{ renderSecResults((await secApi('api/search?q='+encodeURIComponent(q))).items); }
+  try{ const items = (await secApi('api/search?q='+encodeURIComponent(q))).items; renderSecResults(items, items.length); }
   catch(err){ box.innerHTML = `<div class="callout warn">${esc(err.message)}</div>`; }
 });
 async function secFetchFund(projId, cls){
   if (secMode==='static'){
-    secStatic = await loadStatic().catch(()=>secStatic);
-    const it = secStatic.items.find(x=>x.projId===projId && (x.cls||'')===(cls||''));
-    if (!it) throw new Error('ไม่พบกองนี้ในไฟล์ข้อมูลล่าสุด');
-    return it.fund;
+    const it = secStatic.items.find(x=>x.projId===projId && x.cls===(cls||''));
+    if (!it || !it.amcId) throw new Error('ไม่พบกองนี้ในข้อมูลล่าสุด');
+    if (!amcCache[it.amcId]) amcCache[it.amcId] = await getJson(`data/funds/${encodeURIComponent(it.amcId)}.json`);
+    const items = amcCache[it.amcId] && amcCache[it.amcId].items;
+    const fund = items && Object.prototype.hasOwnProperty.call(items, `${projId}|${cls||''}`) ? items[`${projId}|${cls||''}`] : null;
+    if (!fund) throw new Error('ไม่พบข้อมูลรายละเอียดของกองนี้');
+    return fund;
   }
   const {fund} = await secApi(`api/fund?proj_id=${encodeURIComponent(projId)}&cls=${encodeURIComponent(cls||'')}`);
   return fund;

@@ -49,6 +49,7 @@ class ApiError(Exception):
 
 
 _cache = {}
+CALLS = {"network": 0}  # uncached API requests made by this process (reported by the batch builder)
 _CACHE_TTL = 15 * 60
 
 
@@ -75,10 +76,12 @@ def api_get(path, params=None):
                 "Cache-Control": "no-cache",
                 "Accept": "application/json",
             })
+            CALLS["network"] += 1
             try:
-                with urllib.request.urlopen(req, timeout=30) as r:
+                with urllib.request.urlopen(req, timeout=60) as r:
                     data = json.loads(r.read().decode("utf-8") or "{}")
-                    _cache[url] = (time.time(), data)
+                    if _CACHE_TTL:
+                        _cache[url] = (time.time(), data)
                     return data
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", "replace")[:300]
@@ -137,13 +140,32 @@ def latest_rows(rows):
     return [r for r in rows if (r.get("start_date") or "") == top]
 
 
-def factsheet(path, proj_id, cls=None, class_level=True):
-    params = {"proj_id": proj_id, "latest": "true"}
-    rows = api_all(path, params)
+# Data sets used to build one fund record: key -> (path, class-level?, fact-sheet dated rows / supports latest=true)
+DATASETS = {
+    "specs":   ("/v2/fund/general-info/specifications", True, False),
+    "risk":    ("/v2/fund/factsheet/risk-spectrum", False, True),
+    "stats":   ("/v2/fund/factsheet/statistics", True, True),
+    "fees":    ("/v2/fund/factsheet/fees", True, True),
+    "genfees": ("/v2/fund/general-info/mutual-fund-fees", True, False),
+    "perf":    ("/v2/fund/factsheet/performance", True, True),
+    "div":     ("/v2/fund/factsheet/dividend-policy", True, True),
+    "periods": ("/v2/fund/factsheet/subscription-redemption-periods", True, True),
+    "mins":    ("/v2/fund/factsheet/subscription-redemption-minimums", True, True),
+    "top5":    ("/v2/fund/factsheet/top5-holdings", False, True),
+}
+DATASET_LABELS = {"specs": "ประเภทพิเศษ", "risk": "ระดับความเสี่ยง", "stats": "ข้อมูลสถิติ", "fees": "ค่าธรรมเนียม",
+                  "genfees": "ค่าธรรมเนียมตามโครงการ", "perf": "ผลการดำเนินงาน", "div": "นโยบายปันผล",
+                  "periods": "ระยะเวลาซื้อขาย", "mins": "มูลค่าซื้อขั้นต่ำ", "top5": "5 อันดับแรก", "nav": "NAV"}
+
+
+def pick(rows, cls, class_level=True, dated=True):
+    """Rows of one fund -> rows for this share class from the latest fact sheet."""
     if class_level:
         matched = [r for r in rows if class_match(r, cls)]
-        rows = matched or rows  # some funds report class data under "main"
-    return latest_rows(rows)
+        if not matched:  # fund-wide rows reported under "main" apply to every class; never borrow another class's numbers
+            matched = [r for r in rows if class_match(r, "")]
+        rows = matched
+    return latest_rows(rows) if dated else rows
 
 
 def safe(fn, notes, label):
@@ -283,6 +305,7 @@ def map_fees(fs_rows, general_rows, notes):
 
 
 def fetch_fund(proj_id, cls):
+    """Live mode: pull every data set for one fund, then map it."""
     notes = []
     profiles = api_all("/v2/fund/general-info/profiles", {"project_info": proj_id})
     profiles = [p for p in profiles if p.get("proj_id") == proj_id]
@@ -291,22 +314,32 @@ def fetch_fund(proj_id, cls):
     profile = next((p for p in profiles if class_match(p, cls)), profiles[0])
     cls = cls or (profile.get("fund_class_name") or "")
 
-    specs = safe(lambda: [s for s in api_all("/v2/fund/general-info/specifications", {"proj_id": proj_id})
-                          if class_match(s, cls) or not s.get("fund_class_name")], notes, "ประเภทพิเศษ")
-    risk = safe(lambda: factsheet("/v2/fund/factsheet/risk-spectrum", proj_id, class_level=False), notes, "ระดับความเสี่ยง")
-    stats_rows = safe(lambda: factsheet("/v2/fund/factsheet/statistics", proj_id, cls), notes, "ข้อมูลสถิติ")
-    fee_rows = safe(lambda: factsheet("/v2/fund/factsheet/fees", proj_id, cls), notes, "ค่าธรรมเนียม")
-    gen_fee_rows = safe(lambda: [r for r in api_all("/v2/fund/general-info/mutual-fund-fees", {"proj_id": proj_id})
-                                 if class_match(r, cls)], notes, "ค่าธรรมเนียมตามโครงการ")
-    perf_rows = safe(lambda: factsheet("/v2/fund/factsheet/performance", proj_id, cls), notes, "ผลการดำเนินงาน")
-    div_rows = safe(lambda: factsheet("/v2/fund/factsheet/dividend-policy", proj_id, cls), notes, "นโยบายปันผล")
-    period_rows = safe(lambda: factsheet("/v2/fund/factsheet/subscription-redemption-periods", proj_id, cls), notes, "ระยะเวลาซื้อขาย")
-    min_rows = safe(lambda: factsheet("/v2/fund/factsheet/subscription-redemption-minimums", proj_id, cls), notes, "มูลค่าซื้อขั้นต่ำ")
-    top5 = safe(lambda: factsheet("/v2/fund/factsheet/top5-holdings", proj_id, class_level=False), notes, "5 อันดับแรก")
+    raw = {}
+    for key, (path, _, dated) in DATASETS.items():
+        raw[key] = safe(lambda: api_all(path, {"proj_id": proj_id, "latest": "true" if dated else None}),
+                        notes, DATASET_LABELS[key])
     today = date.today()
-    nav_rows = safe(lambda: api_all("/v2/fund/daily-info/nav", {
+    raw["nav"] = safe(lambda: api_all("/v2/fund/daily-info/nav", {
         "proj_id": proj_id, "fund_class_name": cls if cls and cls != "main" else None,
         "start_nav_date": (today - timedelta(days=14)).isoformat(), "end_nav_date": today.isoformat()}), notes, "NAV")
+    return assemble_fund(profile, cls, raw, notes)
+
+
+def assemble_fund(profile, cls, raw, notes=None):
+    """Map the raw rows of ONE fund (all share classes, any fact-sheet dates) to the screener's fund format."""
+    notes = list(notes or [])
+    proj_id = profile.get("proj_id")
+
+    def get(key):
+        _, class_level, dated = DATASETS[key]
+        return pick(raw.get(key) or [], cls, class_level, dated)
+
+    specs = [s for s in (raw.get("specs") or []) if class_match(s, cls) or not s.get("fund_class_name")]
+    risk, stats_rows, fee_rows = get("risk"), get("stats"), get("fees")
+    gen_fee_rows = get("genfees")
+    perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
+    nav_rows = pick(raw.get("nav") or [], cls, True, False)
+    today = date.today()
 
     stats = stats_rows[0] if stats_rows else {}
     risk_level = None
@@ -332,7 +365,7 @@ def fetch_fund(proj_id, cls):
         "maxDD": abs(to_num(stats.get("maximum_drawdown"))) if to_num(stats.get("maximum_drawdown")) is not None else "",
         "trackErr": to_num(stats.get("tracking_error")) if to_num(stats.get("tracking_error")) else "",
         "hedge": map_hedge(profile, stats, region),
-        "dividend": "yes" if div_rows and str(div_rows[0].get("dividend_policy")).upper() == "Y" else ("no" if div_rows else "no"),
+        "dividend": "yes" if div_rows and str(div_rows[0].get("dividend_policy")).upper() == "Y" else "no",
         "minHold": min_hold or "",
     }
     fund.update(map_fees(fee_rows, gen_fee_rows, notes))
@@ -345,7 +378,7 @@ def fetch_fund(proj_id, cls):
         v = to_num(min_rows[0].get("minimum_sub"))
         if v is not None and "THB" in str(min_rows[0].get("minimum_sub_cur") or "THB").upper():
             fund["minBuy"] = v
-    navs = sorted((n for n in nav_rows if class_match(n, cls) or not cls), key=lambda n: n.get("nav_date") or "")
+    navs = sorted(nav_rows, key=lambda n: n.get("nav_date") or "")
     if navs and to_num(navs[-1].get("net_asset")):
         fund["aum"] = round(to_num(navs[-1]["net_asset"]) / 1e6, 1)
 
@@ -392,7 +425,6 @@ class Handler(BaseHTTPRequestHandler):
         "/index.html": ("index.html", "text/html; charset=utf-8"),
         "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         "/vendor/chart.umd.min.js": ("vendor/chart.umd.min.js", "text/javascript; charset=utf-8"),
-        "/data/funds.json": ("data/funds.json", "application/json; charset=utf-8"),
     }
     ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
     server_version = "FundScreener"
@@ -433,8 +465,13 @@ class Handler(BaseHTTPRequestHandler):
         site = self.headers.get("Sec-Fetch-Site")
         return site in (None, "same-origin", "none")
 
+    DATA_PATH = re.compile(r"^/data/(index\.json|funds/[A-Za-z0-9_-]{1,40}\.json)$")
+
     def serve_static(self, path, head_only=False):
         entry = self.STATIC.get(path)
+        m = self.DATA_PATH.match(path)
+        if not entry and m:  # output of `py sec_build.py`, for trying the GitHub Pages mode locally
+            entry = ("data/" + m.group(1), "application/json; charset=utf-8")
         if not entry:
             return self.send_bytes(404, b"not found", "text/plain; charset=utf-8", head_only)
         try:
