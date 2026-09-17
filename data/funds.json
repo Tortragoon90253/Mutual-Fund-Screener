@@ -1,0 +1,112 @@
+{
+ "generated": "2026-09-17T09:10:14+00:00",
+ "source": "SEC Open API (api.sec.or.th) — ข้อมูลจาก Fund Fact Sheet ที่ บลจ. รายงานต่อ ก.ล.ต.",
+ "count": 2,
+ "items": [
+  {
+   "projId": "M0667_2559",
+   "cls": "main",
+   "abbr": "B-INNOTECH",
+   "nameTh": "กองทุนเปิดบัวหลวงโกลบอลอินโนเวชั่นและเทคโนโลยี",
+   "nameEn": "Bualuang Global Innovation & Technology Fund",
+   "amc": "บริษัทหลักทรัพย์จัดการกองทุนรวม  บัวหลวง จำกัด",
+   "classDesc": "",
+   "policy": "ตราสารทุน",
+   "retail": "R",
+   "fund": {
+    "name": "B-INNOTECH — กองทุนเปิดบัวหลวงโกลบอลอินโนเวชั่นและเทคโนโลยี",
+    "amc": "รวม  บัวหลวง",
+    "assetClass": "global_equity",
+    "region": "GLOBAL",
+    "taxType": "none",
+    "feeder": true,
+    "master": "Fidelity Funds - Global Technology Fund",
+    "holdings": "",
+    "top5": 98.49,
+    "riskLevel": "7",
+    "maxDD": 25.03,
+    "trackErr": "",
+    "hedge": "partial",
+    "dividend": "no",
+    "minHold": "",
+    "back": 0.0,
+    "switchFee": 0.0,
+    "front": 1.0,
+    "ter": 1.27,
+    "ret1": 19.86,
+    "ret3": 16.4,
+    "ret5": 10.12,
+    "bm5": 15.29,
+    "bm1": 21.65,
+    "bm3": 22.89,
+    "sd": 19.24,
+    "settle": 4.0,
+    "minBuy": 500.0,
+    "aum": 16617.3,
+    "sec": {
+     "projId": "M0667_2559",
+     "cls": "main",
+     "asOf": "2026-07-31",
+     "fetched": "2026-09-17",
+     "notes": [
+      "5 อันดับแรกคือกองหลัก — ความกระจุกตัวจริงต้องดูจาก Fact Sheet ของกองหลัก"
+     ],
+     "missing": []
+    }
+   }
+  },
+  {
+   "projId": "M0643_2555",
+   "cls": "SCBS&P500",
+   "abbr": "SCBS&P500FUND",
+   "nameTh": "กองทุนเปิดไทยพาณิชย์หุ้นยูเอส",
+   "nameEn": "SCB US EQUITY FUND",
+   "amc": "บริษัทหลักทรัพย์จัดการกองทุน ไทยพาณิชย์ จำกัด",
+   "classDesc": "เหมาะสำหรับผู้ลงทุนที่ต้องการรับผลตอบแทนจากเงินปันผล",
+   "policy": "ตราสารทุน",
+   "retail": "R",
+   "fund": {
+    "name": "SCBS&P500FUND (SCBS&P500) — กองทุนเปิดไทยพาณิชย์หุ้นยูเอส",
+    "amc": "ไทยพาณิชย์",
+    "assetClass": "global_equity",
+    "region": "US",
+    "taxType": "none",
+    "feeder": true,
+    "master": "iShares Core S&P 500 ETF",
+    "holdings": "",
+    "top5": 99.86,
+    "riskLevel": "6",
+    "maxDD": 25.15,
+    "trackErr": "",
+    "hedge": "full",
+    "dividend": "yes",
+    "minHold": "",
+    "front": 0.5,
+    "switchFee": 0.5,
+    "back": 0.0,
+    "ter": 1.1,
+    "ret3": 13.68,
+    "ret5": 8.44,
+    "ret1": 14.41,
+    "bm1": 14.65,
+    "bm5": 9.38,
+    "bm3": 15.01,
+    "sd": 16.96,
+    "settle": 2.0,
+    "minBuy": 1.0,
+    "aum": 11388.0,
+    "sec": {
+     "projId": "M0643_2555",
+     "cls": "SCBS&P500",
+     "asOf": "2026-07-31",
+     "fetched": "2026-09-17",
+     "notes": [
+      "5 อันดับแรกคือกองหลัก — ความกระจุกตัวจริงต้องดูจาก Fact Sheet ของกองหลัก"
+     ],
+     "missing": []
+    }
+   }
+  }
+ ],
+ "errors": []
+}
