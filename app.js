@@ -37,7 +37,7 @@ const FIELDS = [
     {k:'top5', l:'สัดส่วน 5 อันดับแรก (%)', t:'number', step:0.1}
   ]},
   {g:'③ ระดับความเสี่ยง', f:[
-    {k:'riskLevel', l:'ระดับความเสี่ยง (1–8)', t:'select', o:[1,2,3,4,5,6,7,8].map(v=>({v:String(v),l:String(v)}))},
+    {k:'riskLevel', l:'ระดับความเสี่ยง (1–8)', t:'select', o:[{v:'',l:'ไม่ทราบ'}].concat([1,2,3,4,5,6,7,8].map(v=>({v:String(v),l:String(v)})))},
     {k:'maxDD', l:'ขาดทุนสูงสุด Max Drawdown (%)', t:'number', step:0.1, hint:'ใส่เป็นตัวเลขบวก เช่น 34'},
     {k:'sd', l:'ความผันผวน SD (% ต่อปี)', t:'number', step:0.1}
   ]},
@@ -190,14 +190,15 @@ function evaluate(f, p){
     C('c2', s, r); }
 
   // 3 risk
-  { let s=100; const r=[]; const lvl=num(f.riskLevel,6);
-    if (lvl>tol){ s=0; r.push(R('bad',`ความเสี่ยงระดับ ${lvl} สูงกว่าที่รับได้ (${tol})`)); out.fails.push(`ความเสี่ยงระดับ ${lvl} เกินที่รับได้`); }
+  { let s=100; const r=[]; const known = has(f.riskLevel); const lvl=num(f.riskLevel,0);
+    if (!known){ s=50; r.push(R('warn','ไม่ทราบระดับความเสี่ยง — ดูจาก Fact Sheet แล้วเลือกในฟอร์ม (ยังไม่ถูกคัดออก)')); }
+    else if (lvl>tol){ s=0; r.push(R('bad',`ความเสี่ยงระดับ ${lvl} สูงกว่าที่รับได้ (${tol})`)); out.fails.push(`ความเสี่ยงระดับ ${lvl} เกินที่รับได้`); }
     else r.push(R('good',`ความเสี่ยงระดับ ${lvl} ไม่เกินที่รับได้ (${tol})`));
     const allowed = tol*7;
     if (has(f.maxDD)){ const dd=Math.abs(num(f.maxDD)); const ratio=dd/allowed;
-      const ds = clamp(100-Math.max(0,ratio-0.5)*100,0,100); if (lvl<=tol) s=ds;
+      const ds = clamp(100-Math.max(0,ratio-0.5)*100,0,100); if (known && lvl<=tol) s=ds; else if (!known) s=Math.min(50, ds);
       r.push(R(ratio>1?'bad':ratio>0.8?'warn':'good',`เคยขาดทุนสูงสุด −${dd}% (ระดับที่รับได้ประมาณ −${allowed}%) — ถ้าเจอแบบนี้อีกจะถือต่อไหวไหม?`)); }
-    else { if (lvl<=tol) s=70; r.push(R('warn','ไม่ได้ระบุ Max Drawdown')); }
+    else { if (known && lvl<=tol) s=70; r.push(R('warn','ไม่ได้ระบุ Max Drawdown')); }
     C('c3', s, r); }
 
   // 4 fees
@@ -329,6 +330,7 @@ function buildForm(){
     if (fld.t==='select') return `<label class="f">${fld.l}<select id="${id}">${fld.o.map(o=>`<option value="${o.v}">${o.l}</option>`).join('')}</select>${hint}</label>`;
     return `<label class="f">${fld.l}<input id="${id}" type="${fld.t}" ${fld.step?`step="${fld.step}"`:''} ${fld.req?'required':''}>${hint}</label>`;
   }).join('')}</div></fieldset>`).join('') +
+  `<p class="form-legend" id="formLegend" hidden><span class="lg need">ช่องสีเหลือง</span> ก.ล.ต. ไม่มีข้อมูล — กรอกเองจาก Fact Sheet · <span class="lg check">ขอบสีฟ้า</span> ระบบอนุมานให้ — ควรตรวจ</p>` +
   `<div class="row"><button class="btn primary" type="submit" id="btnSave">บันทึกกองทุน</button><button class="btn" type="button" id="btnReset">ล้างฟอร์ม</button></div>`;
   form.addEventListener('submit', e=>{ e.preventDefault(); saveFund(); });
   $('#btnReset').addEventListener('click', ()=>fillForm(null));
@@ -342,8 +344,21 @@ function fillForm(f){
     if (fld.t==='check') el.checked = !!src[fld.k];
     else el.value = src[fld.k] ?? (fld.t==='select' ? el.options[0].value : '');
   }));
+  markSecFields(f);
   $('#formTitle').textContent = f ? 'แก้ไข: '+f.name : 'เพิ่มกองทุน';
   $('#btnSave').textContent = f ? 'บันทึกการแก้ไข' : 'บันทึกกองทุน';
+}
+// Fields the SEC data can fill; empty ones are highlighted for manual entry. Inferred ones get a "check" outline.
+const SEC_FILLABLE = ['holdings','top5','riskLevel','maxDD','sd','front','back','ter','ret1','bm1','ret3','bm3','ret5','bm5','aum','settle','minBuy'];
+const SEC_INFERRED = ['assetClass','region','hedge','minHold'];
+function markSecFields(f){
+  const isSec = !!(f && f.sec);
+  FIELDS.forEach(g=>g.f.forEach(fld=>{
+    const label = $('#ff_'+fld.k).closest('label');
+    label.classList.toggle('need', isSec && SEC_FILLABLE.includes(fld.k) && !has(f[fld.k]));
+    label.classList.toggle('check', isSec && (SEC_INFERRED.includes(fld.k) || (fld.k==='ter' && (f.sec.notes||[]).some(n=>n.includes('TER')))));
+  }));
+  $('#formLegend').hidden = !isSec;
 }
 function saveFund(){
   const f = {};
@@ -393,13 +408,16 @@ async function getJson(url){
 }
 async function loadStatic(){
   const j = await getJson('data/index.json');
-  if (!j || !Array.isArray(j.items)) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+  if (!j || !(Array.isArray(j.items) || Array.isArray(j.rows))) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
   const amcs = (j.amcs && typeof j.amcs==='object') ? j.amcs : {};
   // pre-compute a lowercase search string per share class
-  j.items = j.items.filter(it=>it && typeof it.projId==='string').map(it=>{
+  const raw = Array.isArray(j.rows) && Array.isArray(j.fields)
+    ? j.rows.filter(Array.isArray).map(row=>Object.fromEntries(j.fields.map((k,i)=>[k,row[i]])))
+    : j.items;
+  j.items = raw.filter(it=>it && typeof it.projId==='string').map(it=>{
     const x = {projId:cleanStr(it.projId,40), cls:cleanStr(it.cls,60), abbr:cleanStr(it.abbr,60), nameTh:cleanStr(it.nameTh),
                nameEn:cleanStr(it.nameEn), policy:cleanStr(it.policy,100), retail:cleanStr(it.retail,2),
-               classDesc:cleanStr(it.classDesc), amcId:AMC_ID_RE.test(it.amcId)?it.amcId:''};
+               tag:cleanStr(it.tag || it.classDesc, 80), amcId:AMC_ID_RE.test(it.amcId)?it.amcId:''};
     x.amc = cleanStr(amcs[x.amcId]);
     x.hay = [x.abbr,x.cls,x.nameTh,x.nameEn,x.amc].join(' ').toLowerCase();
     return x;
@@ -440,7 +458,7 @@ function renderSecResults(items, total){
   $('#secResults').innerHTML = items.length ? `<p class="muted" style="margin:0 0 4px">พบ ${total.toLocaleString('th-TH')} รายการ${more}</p>` + items.map(it=>`<div class="sec-row">
       <div><b>${esc(it.abbr)}${it.cls&&it.cls!=='main'?' · '+esc(it.cls):''}</b> ${NON_RETAIL[it.retail]?`<span class="tag">${NON_RETAIL[it.retail]}</span>`:''}
         <div class="meta">${esc(it.nameTh||it.nameEn)}</div>
-        <div class="meta">${esc(it.amc)}${it.policy?' · '+esc(it.policy):''}${it.classDesc?' · '+esc(it.classDesc):''}</div></div>
+        <div class="meta">${esc(it.amc)}${it.policy?' · '+esc(it.policy):''}${it.tag?' · '+esc(it.tag):''}</div></div>
       <button class="btn small primary" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}">เพิ่ม</button></div>`).join('')
     : '<p class="muted">ไม่พบกองทุน — ลองใช้ชื่อย่อหรือคำอื่น</p>';
 }
@@ -463,7 +481,11 @@ $('#secForm').addEventListener('submit', async e=>{
     return;
   }
   box.innerHTML = '<p class="muted">กำลังค้นหา…</p>';
-  try{ const items = (await secApi('api/search?q='+encodeURIComponent(q))).items; renderSecResults(items, items.length); }
+  try{
+    const items = (await secApi('api/search?q='+encodeURIComponent(q))).items
+      .map(it=>({...it, tag: it.classDesc && it.classDesc.length>80 ? it.classDesc.slice(0,80)+'…' : it.classDesc}));
+    renderSecResults(items, items.length);
+  }
   catch(err){ box.innerHTML = `<div class="callout warn">${esc(err.message)}</div>`; }
 });
 async function secFetchFund(projId, cls){

@@ -20,6 +20,7 @@ import re
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
 import sec_server as sec
@@ -29,10 +30,25 @@ WATCHLIST = os.path.join(HERE, "watchlist.txt")
 IN_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 MAX_CALLS = int(os.environ.get("SEC_MAX_CALLS") or 8000)  # safety budget per run (protects the key's quota)
 AMC_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+WORKERS = max(1, min(8, int(os.environ.get("SEC_WORKERS") or 4)))  # endpoints downloaded at the same time
+# Compact search index: one array per share class instead of repeating key names 5,000 times
+INDEX_FIELDS = ["projId", "cls", "abbr", "nameTh", "nameEn", "policy", "retail", "tag", "amcId"]
 
 
 class BudgetExceeded(Exception):
     pass
+
+
+def class_tag(desc):
+    """Share-class descriptions run to 2,700 characters; the search list only needs what sets classes apart."""
+    d = str(desc or "")
+    if re.search(r"ขายคืน.{0,40}อัตโนมัติ|auto[\s-]?redemption", d, re.I):
+        return "ขายคืนอัตโนมัติ"
+    if re.search(r"ไม่จ่ายเงินปันผล|ไม่มีนโยบายจ่ายเงินปันผล|ส่วนต่าง|สะสมมูลค่า|capital gain", d, re.I):
+        return "สะสมมูลค่า"
+    if re.search(r"ปันผล|dividend", d, re.I):
+        return "จ่ายปันผล"
+    return ""
 
 
 def log(msg):
@@ -71,8 +87,7 @@ def fetch_all(path, params=None):
 
 
 # ---------------------------------------------------------------- collect
-def collect_all():
-    """Bulk mode: one paginated download per endpoint, then group rows by fund."""
+def fetch_profiles():
     profiles = fetch_all("/v2/fund/general-info/profiles", {"fund_status": "Registered"})
     if any(p.get("fund_status") != "Registered" for p in profiles):
         pass  # status filter ignored by the API: this download already holds every fund
@@ -80,43 +95,52 @@ def collect_all():
         profiles += fetch_all("/v2/fund/general-info/profiles", {"fund_status": "IPO"})
     else:  # filter rejected -> take everything and filter here
         profiles = fetch_all("/v2/fund/general-info/profiles")
+    return profiles
+
+
+def collect_all():
+    """Bulk mode: every endpoint is paginated on its own, so the downloads run side by side
+    (SEC_WORKERS at a time); the API spends ~1.7 s per page, which made a sequential run ~100 min."""
+    today = date.today()
+    jobs = {"profiles": fetch_profiles}
+    for key, (path, _, dated) in sec.DATASETS.items():
+        jobs[key] = (lambda p=path, d=dated: fetch_all(p, {"latest": "true"} if d else None))
+    jobs["nav"] = lambda: fetch_all("/v2/fund/daily-info/nav", {
+        "start_nav_date": (today - timedelta(days=7)).isoformat(), "end_nav_date": today.isoformat()})
+
+    results, notes = {}, []
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        futures = {pool.submit(fn): key for key, fn in jobs.items()}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                results[key] = fut.result()
+            except sec.ApiError as e:
+                if e.status in (401, 403) or key == "profiles":
+                    for f in futures:
+                        f.cancel()
+                    raise
+                notes.append(f"ดึง{sec.DATASET_LABELS[key]}ไม่สำเร็จ ({e.status})")
+                warn(notes[-1])
+            except BudgetExceeded:
+                for f in futures:
+                    f.cancel()
+                raise
+
     unique = {}
-    for p in profiles:
+    for p in results["profiles"]:
         if sec.is_active(p) and p.get("proj_id"):
             unique[(p["proj_id"], p.get("fund_class_name") or "")] = p
     profiles = list(unique.values())
-    active = {p["proj_id"] for p in profiles}
-    log(f"กองทุนที่เปิดอยู่ {len(active):,} กอง / {len(profiles):,} ชนิดหน่วยลงทุน")
-
-    by_fund = {pid: {} for pid in active}
-    notes = []
-    for key, (path, _, dated) in sec.DATASETS.items():
-        try:
-            rows = fetch_all(path, {"latest": "true"} if dated else None)
-        except sec.ApiError as e:
-            if e.status in (401, 403):
-                raise
-            notes.append(f"ดึง{sec.DATASET_LABELS[key]}ไม่สำเร็จ ({e.status})")
-            warn(notes[-1])
+    by_fund = {p["proj_id"]: {} for p in profiles}
+    log(f"กองทุนที่เปิดอยู่ {len(by_fund):,} กอง / {len(profiles):,} ชนิดหน่วยลงทุน")
+    for key, rows in results.items():
+        if key == "profiles":
             continue
         for r in rows:
             pid = r.get("proj_id")
             if pid in by_fund:
                 by_fund[pid].setdefault(key, []).append(r)
-
-    today = date.today()
-    try:
-        navs = fetch_all("/v2/fund/daily-info/nav", {
-            "start_nav_date": (today - timedelta(days=7)).isoformat(), "end_nav_date": today.isoformat()})
-        for r in navs:
-            if r.get("proj_id") in by_fund:
-                by_fund[r["proj_id"]].setdefault("nav", []).append(r)
-    except sec.ApiError as e:
-        if e.status in (401, 403):
-            raise
-        notes.append(f"ดึง NAV ไม่สำเร็จ ({e.status})")
-        warn(notes[-1])
-
     return [(p, by_fund[p["proj_id"]], notes) for p in profiles], []
 
 
@@ -245,8 +269,8 @@ def main():
         amc_names[amc] = profile.get("comp_name_th") or amc_names.get(amc, "")
         amc_files.setdefault(amc, {})[f"{profile['proj_id']}|{cls}"] = fund
         s = sec.profile_summary(profile)
-        index_items.append({k: s[k] for k in ("projId", "cls", "abbr", "nameTh", "nameEn", "policy", "retail", "classDesc")}
-                           | {"amcId": amc})
+        s.update(tag=class_tag(s["classDesc"]), amcId=amc, retail="" if s["retail"] == "R" else s["retail"])
+        index_items.append([s[k] or "" for k in INDEX_FIELDS])
     if failed:
         errors.append(f"แปลงข้อมูลไม่สำเร็จ {failed} รายการ")
 
@@ -254,7 +278,7 @@ def main():
         log("ไม่มีกองทุนที่ดึงสำเร็จเลย — ไม่เขียนทับข้อมูลเดิม")
         return 1
 
-    index_items.sort(key=lambda i: (i["abbr"], i["cls"]))
+    index_items.sort(key=lambda r: (r[2], r[1]))
     fp = digest(index_items, amc_files)
     index_path = os.path.join(args.out, "index.json")
     try:
@@ -280,7 +304,8 @@ def main():
         "amcs": amc_names,
         "errors": errors[:200],
         "stats": {"apiCalls": sec.CALLS["network"], "seconds": round(time.time() - started)},
-        "items": index_items,
+        "fields": INDEX_FIELDS,
+        "rows": index_items,
     })
     set_output("changed", "true")
     log(f"บันทึก {len(index_items):,} รายการ ({len(amc_files)} บลจ.) · เรียก API {sec.CALLS['network']:,} ครั้ง"

@@ -25,13 +25,15 @@ env:
   # Repository variables (Settings → Secrets and variables → Actions → Variables), all optional:
   #   DATA_MODE      all (default) | watchlist
   #   SEC_MAX_CALLS  API call budget per run (default 8000)
+  #   SEC_WORKERS    endpoints downloaded in parallel (default 4, max 8)
   DATA_MODE: ${{ vars.DATA_MODE || 'all' }}
   SEC_MAX_CALLS: ${{ vars.SEC_MAX_CALLS || '8000' }}
+  SEC_WORKERS: ${{ vars.SEC_WORKERS || '4' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       contents: write          # force-push the generated data to the `data` branch
     outputs:

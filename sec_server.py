@@ -50,6 +50,7 @@ class ApiError(Exception):
 
 _cache = {}
 CALLS = {"network": 0}  # uncached API requests made by this process (reported by the batch builder)
+_calls_lock = threading.Lock()
 _CACHE_TTL = 15 * 60
 
 
@@ -76,7 +77,8 @@ def api_get(path, params=None):
                 "Cache-Control": "no-cache",
                 "Accept": "application/json",
             })
-            CALLS["network"] += 1
+            with _calls_lock:
+                CALLS["network"] += 1
             try:
                 with urllib.request.urlopen(req, timeout=60) as r:
                     data = json.loads(r.read().decode("utf-8") or "{}")
