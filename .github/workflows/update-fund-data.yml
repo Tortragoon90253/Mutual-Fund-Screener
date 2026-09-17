@@ -1,0 +1,89 @@
+name: Update fund data & deploy site
+
+on:
+  schedule:
+    - cron: "0 20 * * *"   # every day 03:00 Thailand time (20:00 UTC)
+  workflow_dispatch:        # "Run workflow" button in the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "app.js"
+      - "vendor/**"
+      - "watchlist.txt"
+      - "sec_build.py"
+      - "sec_server.py"
+      - ".github/workflows/update-fund-data.yml"
+
+permissions: {}
+
+concurrency:
+  group: fund-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write          # commit data/funds.json back to the repo
+    outputs:
+      data_ok: ${{ steps.data.outcome == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch data from SEC Open API
+        id: data
+        continue-on-error: true  # still deploy the site (manual-entry mode) if the key is missing or the API is down
+        env:
+          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
+          SEC_API_KEY_SECONDARY: ${{ secrets.SEC_API_KEY_SECONDARY }}
+        run: python3 sec_build.py
+
+      - name: Commit updated data
+        if: steps.data.outcome == 'success'
+        run: |
+          git add data/funds.json 2>/dev/null || exit 0
+          if git diff --staged --quiet; then
+            echo "No data changes."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Update fund data $(date -u +%Y-%m-%d)"
+            git pull --rebase --quiet
+            git push
+          fi
+
+      - name: Assemble public site (page files only)
+        run: |
+          mkdir -p _site/vendor
+          cp index.html app.js _site/
+          cp vendor/chart.umd.min.js _site/vendor/
+          if [ -f data/funds.json ]; then mkdir -p _site/data && cp data/funds.json _site/data/; fi
+          ls -R _site
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      - name: Report data problems
+        if: needs.build.outputs.data_ok != 'true'
+        run: |
+          echo "::error::The site was deployed, but fetching SEC data failed. Open the 'Fetch data from SEC Open API' step log (usually a missing or wrong SEC_API_KEY secret)."
+          exit 1

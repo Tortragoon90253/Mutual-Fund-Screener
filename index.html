@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>คัดกรองกองทุน & วางแผนลงทุน</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#f0eee8; --text:#1d1c1a; --muted:#6b675f; --border:#e0ddd4;
+  --accent:#1f6f5c; --accent-soft:#dcefe8; --on-accent:#ffffff;
+  --good:#1f7a4d; --good-soft:#dff2e6; --warn:#9a6a00; --warn-soft:#fbf0d4; --bad:#b3372c; --bad-soft:#f8e0dc;
+  --c-bad:#c2553f; --c-mid:#1f6f5c; --c-good:#3a67b8; --c-principal:#8f8a80; --c-real:#9a6a00; --grid:#e7e4dc;
+  --radius:12px; --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#151513; --surface:#1f1e1b; --surface-2:#292824; --text:#ecebe6; --muted:#a39f95; --border:#36342f;
+    --accent:#5cc3a5; --accent-soft:#1e3a32; --on-accent:#0f1a17;
+    --good:#6fd39c; --good-soft:#1d3527; --warn:#e6b84f; --warn-soft:#3a2f16; --bad:#f08a7c; --bad-soft:#3f2320;
+    --c-bad:#f08a7c; --c-mid:#5cc3a5; --c-good:#86a9ee; --c-principal:#8a867c; --c-real:#e6b84f; --grid:#2e2d29;
+    --shadow:none;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#151513; --surface:#1f1e1b; --surface-2:#292824; --text:#ecebe6; --muted:#a39f95; --border:#36342f;
+  --accent:#5cc3a5; --accent-soft:#1e3a32; --on-accent:#0f1a17;
+  --good:#6fd39c; --good-soft:#1d3527; --warn:#e6b84f; --warn-soft:#3a2f16; --bad:#f08a7c; --bad-soft:#3f2320;
+  --c-bad:#f08a7c; --c-mid:#5cc3a5; --c-good:#86a9ee; --c-principal:#8a867c; --c-real:#e6b84f; --grid:#2e2d29;
+  --shadow:none;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font-family:"Leelawadee UI","Noto Sans Thai","Sukhumvit Set","Thonburi",Tahoma,system-ui,sans-serif;font-size:15px;line-height:1.6;overflow-x:hidden}
+.wrap{max-width:1120px;margin:0 auto;padding:20px 16px 48px}
+header h1{font-size:1.6rem;margin:0 0 2px;line-height:1.3}
+header p{margin:0;color:var(--muted);font-size:.92rem}
+header a{color:var(--accent)}
+.tabs{display:flex;gap:6px;margin:18px 0 16px;overflow-x:auto;padding-bottom:2px}
+.tabs button{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:8px 14px;border-radius:999px;font:inherit;font-weight:500;cursor:pointer}
+.tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
+.card h2{font-size:1.15rem;margin:0 0 4px}
+.card h3{font-size:1rem;margin:16px 0 8px}
+.sub{color:var(--muted);font-size:.9rem;margin:0 0 14px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.88rem;color:var(--muted)}
+label.f span.hint{font-size:.78rem}
+input,select,textarea{font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:transparent}
+label.chk{flex-direction:row;align-items:center;gap:8px;color:var(--text)}
+label.chk input{width:auto}
+fieldset{border:1px solid var(--border);border-radius:10px;padding:12px 14px 14px;margin:0 0 12px}
+legend{font-weight:600;padding:0 6px;font-size:.95rem}
+.btn{font:inherit;font-weight:500;border-radius:8px;padding:8px 14px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.small{padding:4px 10px;font-size:.85rem}
+.btn.danger{color:var(--bad)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.fund-list{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+.fund-item{border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--surface-2)}
+.fund-item b{display:block}
+.fund-item .meta{color:var(--muted);font-size:.84rem}
+.tag{display:inline-block;font-size:.74rem;padding:1px 8px;border-radius:999px;background:var(--warn-soft);color:var(--warn);font-weight:600;vertical-align:middle}
+.tag.sec{background:var(--accent-soft);color:var(--accent);margin-left:4px}
+.sec-row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}
+.sec-row .meta{color:var(--muted);font-size:.84rem}
+.sec-row>div{min-width:0}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:8px 8px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:.82rem}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.cell{display:inline-block;min-width:38px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:600;font-size:.82rem;font-variant-numeric:tabular-nums}
+.s-good{background:var(--good-soft);color:var(--good)}
+.s-warn{background:var(--warn-soft);color:var(--warn)}
+.s-bad{background:var(--bad-soft);color:var(--bad)}
+.grade{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:700}
+.reasons{margin:6px 0 0;padding:0;list-style:none;font-size:.87rem}
+.reasons li{padding:3px 0 3px 22px;position:relative;white-space:normal}
+.reasons li::before{position:absolute;left:0;top:3px;font-weight:700}
+.reasons li.good::before{content:"✓";color:var(--good)}
+.reasons li.warn::before{content:"!";color:var(--warn);left:5px}
+.reasons li.bad::before{content:"✕";color:var(--bad)}
+.reasons .crit{color:var(--muted);font-size:.8rem}
+details.fund-detail{border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;background:var(--surface-2)}
+details.fund-detail summary{cursor:pointer;font-weight:600;list-style-position:outside}
+.kpis{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));margin-bottom:16px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.kpi .k{color:var(--muted);font-size:.82rem}
+.kpi .v{font-size:1.3rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3}
+.kpi .d{font-size:.8rem;color:var(--muted)}
+.chart-box{position:relative;height:340px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+.seg button{font:inherit;border:0;background:var(--surface);color:var(--text);padding:6px 14px;cursor:pointer}
+.seg button.active{background:var(--accent);color:var(--on-accent)}
+.callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:8px;margin:10px 0;font-size:.92rem}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.two{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.two>*,.card{min-width:0}
+@media (max-width:760px){.two{grid-template-columns:minmax(0,1fr)}.chart-box{height:280px}header h1{font-size:1.3rem}}
+.muted{color:var(--muted)}
+footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid var(--border);padding-top:12px}
+.pf-row input[type=number]{width:90px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>โปรแกรมคัดกรองกองทุน & วางแผนการลงทุน</h1>
+  <p>เกณฑ์ 8 ข้อก่อนเลือกซื้อกองทุน/ETF อ้างอิงจากคลิป <a href="https://youtu.be/YGXO27A9Ih4" target="_blank" rel="noopener">Money Matters EP.337</a> · เปรียบเทียบลงทุนก้อนเดียว vs DCA พร้อมคาดการณ์รายปี</p>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button data-tab="profile" class="active">① โปรไฟล์ & เป้าหมาย</button>
+  <button data-tab="funds">② ข้อมูลกองทุน</button>
+  <button data-tab="screen">③ ผลคัดกรอง & จัดพอร์ต</button>
+  <button data-tab="plan">④ วางแผน & คาดการณ์</button>
+</nav>
+
+<!-- PROFILE -->
+<section class="panel active" id="panel-profile">
+  <div class="card">
+    <h2>เริ่มจากเป้าหมาย</h2>
+    <p class="sub">เกณฑ์ข้อแรกในคลิป: รู้ก่อนว่าลงทุนเพื่ออะไร นานแค่ไหน และรับความเสี่ยงได้เท่าไร — ค่าเหล่านี้ใช้คัดกรองทุกกอง</p>
+    <div class="grid">
+      <label class="f">เป้าหมายการลงทุน
+        <select data-p="goal">
+          <option value="wealth">สะสมความมั่งคั่งระยะยาว</option>
+          <option value="retire">เกษียณ</option>
+          <option value="income">ต้องการกระแสเงินสด/ปันผล</option>
+          <option value="tax">ลดหย่อนภาษี (SSF/RMF/Thai ESG)</option>
+          <option value="short">เก็บเงินระยะสั้น</option>
+        </select>
+      </label>
+      <label class="f">ระยะเวลาลงทุน (ปี)
+        <input type="number" min="1" max="50" step="1" data-p="years">
+      </label>
+      <label class="f">ระดับความเสี่ยงที่รับได้ (1–8)
+        <select data-p="riskTol">
+          <option value="1">1 – ตลาดเงินในประเทศ</option>
+          <option value="2">2 – ตลาดเงิน (มีต่างประเทศ)</option>
+          <option value="3">3 – พันธบัตรรัฐบาล</option>
+          <option value="4">4 – ตราสารหนี้</option>
+          <option value="5">5 – กองทุนผสม</option>
+          <option value="6">6 – กองทุนหุ้น</option>
+          <option value="7">7 – หุ้นกลุ่มอุตสาหกรรม/กระจุกตัว</option>
+          <option value="8">8 – การลงทุนทางเลือก/ซับซ้อน</option>
+        </select>
+        <span class="hint">อ้างอิงระดับความเสี่ยงของ ก.ล.ต. ใน Fund Fact Sheet</span>
+      </label>
+    </div>
+  </div>
+  <div class="card">
+    <h2>เงินลงทุน</h2>
+    <p class="sub">รูปแบบการลงทุนเลือกได้ในแท็บ ④ — ก้อนเดียวใช้ "เงินก้อน", DCA ใช้ "เงินรายเดือน", แบบผสมใช้ทั้งสอง</p>
+    <div class="grid">
+      <label class="f">เงินก้อน (บาท)<input type="number" min="0" step="1000" data-p="lump"></label>
+      <label class="f">เงิน DCA ต่อเดือน (บาท)<input type="number" min="0" step="500" data-p="monthly"></label>
+      <label class="f">เงินเฟ้อคาดการณ์ (% ต่อปี)<input type="number" min="0" max="15" step="0.1" data-p="inflation"></label>
+    </div>
+  </div>
+</section>
+
+<!-- FUNDS -->
+<section class="panel" id="panel-funds">
+  <div class="card" id="secCard">
+    <h2>ดึงข้อมูลจาก ก.ล.ต. (SEC Open API)</h2>
+    <p class="sub" id="secStatus">กำลังตรวจสอบการเชื่อมต่อ…</p>
+    <form class="row" id="secForm" style="display:none">
+      <input id="secQ" placeholder="ชื่อย่อ / ชื่อกองทุน เช่น SCBS&P500, K-USXNDQ, ดิวิเดนด์" style="flex:1 1 240px">
+      <button class="btn primary" type="submit">ค้นหา</button>
+    </form>
+    <div id="secResults" style="margin-top:12px"></div>
+  </div>
+  <div class="card">
+    <h2 id="formTitle">เพิ่มกองทุน</h2>
+    <p class="sub">กรอกข้อมูลจาก Fund Fact Sheet (หนังสือชี้ชวนส่วนสรุปข้อมูลสำคัญ) ช่องที่ไม่รู้เว้นว่างได้ โปรแกรมจะเตือนว่าขาดข้อมูล</p>
+    <form id="fundForm"></form>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">กองทุนที่บันทึกไว้ (<span id="fundCount">0</span>)</h2>
+      <div class="row">
+        <button class="btn small" id="btnSamples">โหลดกองตัวอย่าง</button>
+        <button class="btn small danger" id="btnClearSamples">ลบกองตัวอย่าง</button>
+        <button class="btn small" id="btnExport">Export JSON</button>
+        <label class="btn small" style="cursor:pointer">Import JSON<input type="file" id="fileImport" accept=".json,application/json" hidden></label>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:6px">กองที่มีป้าย <span class="tag">ตัวอย่าง</span> เป็นข้อมูลสมมติเพื่อทดลองใช้เท่านั้น ไม่ใช่ข้อมูลกองทุนจริง</p>
+    <div class="fund-list" id="fundList"></div>
+  </div>
+</section>
+
+<!-- SCREEN -->
+<section class="panel" id="panel-screen">
+  <div class="card">
+    <h2>ผลคัดกรองตามเกณฑ์ 8 ข้อ</h2>
+    <p class="sub" id="screenSub"></p>
+    <div class="scroll"><table id="screenTable"></table></div>
+    <details style="margin-top:12px">
+      <summary class="muted" style="cursor:pointer">ปรับน้ำหนักคะแนนแต่ละเกณฑ์</summary>
+      <div class="grid" id="weightInputs" style="margin-top:10px"></div>
+    </details>
+  </div>
+  <div class="card">
+    <h2>เหตุผลรายกอง</h2>
+    <p class="sub">กดเพื่อดูว่าแต่ละกองผ่าน/ติดเกณฑ์ข้อไหน</p>
+    <div id="screenDetails"></div>
+  </div>
+  <div class="card">
+    <h2>จัดพอร์ต</h2>
+    <p class="sub">เลือกกองที่ผ่านการคัดกรองและกำหนดสัดส่วน (โปรแกรมจะปรับให้รวมเป็น 100% อัตโนมัติ)</p>
+    <div class="scroll"><table id="pfTable"></table></div>
+    <p class="muted" id="pfSum" style="margin:8px 0 0"></p>
+  </div>
+</section>
+
+<!-- PLAN -->
+<section class="panel" id="panel-plan">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <h2 style="margin:0">รูปแบบการลงทุน</h2>
+        <p class="sub" style="margin:0" id="modeSub"></p>
+      </div>
+      <div class="seg" id="modeSeg">
+        <button data-mode="lump">ก้อนเดียว</button>
+        <button data-mode="dca">DCA</button>
+        <button data-mode="mix">ผสม</button>
+      </div>
+    </div>
+  </div>
+  <div id="planEmpty" class="callout warn" style="display:none">ยังไม่ได้เลือกกองในพอร์ต — ไปที่แท็บ ③ แล้วเลือกกองที่ผ่านการคัดกรองก่อน</div>
+  <div id="planBody">
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">คาดการณ์มูลค่าพอร์ตรายปี</h2>
+        <label class="f chk"><input type="checkbox" id="showReal"> แสดงมูลค่าหลังหักเงินเฟ้อ</label>
+      </div>
+      <p class="sub" id="projSub"></p>
+      <div class="chart-box"><canvas id="chProj"></canvas></div>
+    </div>
+    <div class="two">
+      <div class="card">
+        <h2>ก้อนเดียว vs DCA</h2>
+        <p class="sub" id="cmpSub"></p>
+        <div class="chart-box"><canvas id="chCmp"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>ผลกระทบของค่าธรรมเนียม</h2>
+        <p class="sub" id="feeSub"></p>
+        <div class="chart-box"><canvas id="chFee"></canvas></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>ข้อสังเกตจากนักวางแผน</h2>
+      <div id="advice"></div>
+    </div>
+    <div class="card">
+      <h2>ตารางรายปี</h2>
+      <p class="sub">มูลค่า = มูลค่าหากขายคืน ณ สิ้นปี (หักค่าธรรมเนียมขายแล้ว) · ค่าธรรมเนียมสะสม = ขาย + บริหารจัดการ (กรณีกลาง)</p>
+      <div class="scroll"><table id="yearTable"></table></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  เครื่องมือนี้จัดทำเพื่อการศึกษาและช่วยจัดระเบียบการตัดสินใจเท่านั้น ไม่ใช่คำแนะนำการลงทุนเฉพาะบุคคล ผลการคาดการณ์ใช้สมมติฐานผลตอบแทนคงที่ ผลตอบแทนในอดีตไม่ได้รับประกันผลตอบแทนในอนาคต ควรอ่านหนังสือชี้ชวนก่อนตัดสินใจลงทุน · ข้อมูลที่กรอกเก็บไว้ในเบราว์เซอร์นี้เท่านั้น ไม่ถูกส่งไปที่ใด
+  <div class="row" style="margin-top:8px"><button class="btn small danger" id="btnWipe">ล้างข้อมูลทั้งหมดในเบราว์เซอร์นี้</button></div>
+</footer>
+</div>
+
+<script src="vendor/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

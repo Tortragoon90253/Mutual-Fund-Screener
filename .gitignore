@@ -1,0 +1,10 @@
+# API keys — never commit
+sec-config.json
+.env
+
+# Python / OS / build leftovers
+__pycache__/
+*.pyc
+_site/
+Thumbs.db
+.DS_Store
