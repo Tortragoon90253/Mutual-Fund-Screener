@@ -33,6 +33,10 @@ IN_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
 # (aum 66.4% -> 47.5%) whenever a holiday stretch or a late filing fell inside it, which moved
 # the liquidity score for reasons that had nothing to do with the funds. sec_server already uses 14.
 NAV_DAYS = 14
+# พอร์ตเต็มรายไตรมาสเป็นชุดที่ใหญ่ที่สุดและยังไม่เคยดึง จึงกำหนดเพดานของตัวเองไว้:
+# เกินแล้วทิ้งทั้งชุดและรายงานขนาด ดีกว่าเก็บครึ่งเดียว (จะนับจำนวนหลักทรัพย์ขาด)
+# หรือปล่อยให้ชนงบรวมแล้วล้มทั้งรอบที่ใช้เวลาเกือบชั่วโมง
+PORT_MAX_PAGES = 2500
 MAX_CALLS = int(os.environ.get("SEC_MAX_CALLS") or 8000)  # safety budget per run (protects the key's quota)
 AMC_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 WORKERS = max(1, min(8, int(os.environ.get("SEC_WORKERS") or 4)))  # endpoints downloaded at the same time
@@ -95,6 +99,44 @@ def fetch_all(path, params=None):
 
 
 # ---------------------------------------------------------------- collect
+def quarter_periods(back=3):
+    """งวดไตรมาสที่ปิดแล้ว ล่าสุดก่อน เป็น YYYYMM"""
+    today = date.today()
+    y, m = today.year, ((today.month - 1) // 3) * 3
+    if m == 0:
+        y, m = y - 1, 12
+    out = []
+    for _ in range(back):
+        out.append(f"{y}{m:02d}")
+        m -= 3
+        if m <= 0:
+            y, m = y - 1, m + 12
+    return out
+
+
+def fetch_probe(path, params, max_pages):
+    """ดึงชุดที่ยังไม่รู้ขนาด โดยมีเพดานหน้าเป็นของตัวเอง — เกินแล้วคืน None"""
+    items, cursor, pages = [], None, 0
+    started = time.time()
+    while True:
+        if pages >= max_pages:
+            warn(f"{path}: เกิน {max_pages} หน้าแล้วยังไม่จบ — ทิ้งทั้งชุด ไม่นำมาใช้รอบนี้")
+            return None
+        if sec.CALLS["network"] >= MAX_CALLS:
+            raise BudgetExceeded(f"ใช้ API ครบ {MAX_CALLS} ครั้งแล้ว (หยุดที่ {path})")
+        p = dict(params or {}, page_size=100)
+        if cursor:
+            p["next_cursor"] = cursor
+        data = sec.api_get(path, p)
+        pages += 1
+        items.extend(data.get("items") or [])
+        cursor = data.get("next_cursor")
+        if not cursor:
+            break
+    log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
+    return items
+
+
 def fetch_profiles():
     profiles = fetch_all("/v2/fund/general-info/profiles", {"fund_status": "Registered"})
     if any(p.get("fund_status") != "Registered" for p in profiles):
@@ -114,6 +156,20 @@ def collect_all():
     for key, (path, _, dated) in sec.DATASETS.items():
         jobs[key] = (lambda p=path, d=dated: fetch_all(p, {"latest": "true"} if d else None))
     # ปันผลไม่มีพารามิเตอร์กรองวันที่ จึงต้องดึงประวัติทั้งหมดแล้วมาตัดเองใน dividend_stats
+    def fetch_portfolio():
+        """พอร์ตเต็มของไตรมาสที่ปิดล่าสุดที่มีข้อมูล — ถอยทีละไตรมาสเพราะ บลจ. ส่งช้าไม่เท่ากัน"""
+        for period in quarter_periods(3):
+            rows = fetch_probe("/v2/fund/outstanding/portfolio",
+                               {"start_period": period, "end_period": period}, PORT_MAX_PAGES)
+            if rows is None:
+                return []
+            if rows:
+                log(f"  พอร์ตเต็ม: ใช้งวด {period}")
+                return rows
+            log(f"  พอร์ตเต็ม: งวด {period} ยังไม่มีข้อมูล ถอยไปงวดก่อนหน้า")
+        return []
+
+    jobs["port"] = fetch_portfolio
     jobs["divh"] = lambda: fetch_all("/v2/fund/daily-info/dividend-history")
     jobs["nav"] = lambda: fetch_all("/v2/fund/daily-info/nav", {
         "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(), "end_nav_date": today.isoformat()})
@@ -204,6 +260,11 @@ def collect_watchlist():
                 raw[name] = fetch_all(path, {"proj_id": p["proj_id"], "latest": "true" if dated else None})
             today = date.today()
             raw["divh"] = fetch_all("/v2/fund/daily-info/dividend-history", {"proj_id": p["proj_id"]})
+            for period in quarter_periods(3):
+                raw["port"] = fetch_all("/v2/fund/outstanding/portfolio",
+                                        {"proj_id": p["proj_id"], "start_period": period, "end_period": period})
+                if raw["port"]:
+                    break
             raw["nav"] = fetch_all("/v2/fund/daily-info/nav", {
                 "proj_id": p["proj_id"], "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(),
                 "end_nav_date": today.isoformat()})
@@ -254,7 +315,7 @@ def build_diag(amc_files):
     """How complete the SEC data really is. A criterion resting on a field only a few funds
     report is worse than no criterion, so every candidate field is measured before it is scored."""
     # seed every candidate at 0 so a field nobody reports shows as 0.0%, not as a missing key
-    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div"] + sec.STATS_EXTRA})
+    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div", "port"] + sec.STATS_EXTRA})
     n, peer_desc = 0, Counter()
     for recs in amc_files.values():
         for f in recs.values():
@@ -263,7 +324,7 @@ def build_diag(amc_files):
                 if f.get(k) not in ("", None):
                     filled[k] += 1
             meta = f.get("sec") or {}
-            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div"):
+            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div", "port"):
                 if meta.get(k):
                     filled[k] += 1
             for k in (meta.get("stats") or {}):

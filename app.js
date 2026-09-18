@@ -177,6 +177,11 @@ function sanitizeFund(f){
     // รับเฉพาะ https เท่านั้น ลิงก์มาจากไฟล์ข้อมูลภายนอก
     const link = o => (o && typeof o==='object' && typeof o.url==='string' && /^https:\/\//.test(o.url))
       ? {url:cleanStr(o.url,400), asOf:cleanStr(o.asOf,20)} : {};
+    const portf = o => { if (!o || typeof o!=='object') return {};
+      const out = {period: cleanStr(o.period,8)};
+      ['n','hhi'].forEach(k=>{ const v = cleanNum(o[k],0,1e6); if (v!=='' && v>0) out[k]=v; });
+      out.top = slices(o.top);
+      return out.n ? out : {}; };
     const divi = o => { if (!o || typeof o!=='object') return {};
       const out={}; ['last12','yield'].forEach(k=>{ const v=cleanNum(o[k],0,1e6); if (v!=='') out[k]=v; });
       out.pays = Array.isArray(o.pays) ? o.pays.slice(0,12)
@@ -194,7 +199,7 @@ function sanitizeFund(f){
     out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing),
                alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20), stats:stats(s.stats),
                cal:years(s.cal), calBm:years(s.calBm), peer:peerRows(s.peer), price:price(s.price),
-               link:link(s.link), bench:list(s.bench), div:divi(s.div)};
+               link:link(s.link), bench:list(s.bench), div:divi(s.div), port:portf(s.port)};
     if (!out.sec.projId) delete out.sec;
   }
   return out;
@@ -522,14 +527,23 @@ function portBlock(f){
                  ['ระยะเวลาฟื้นจากขาดทุนสูงสุด', String(st.recovering_period||'').trim(), true],
                  ['อายุเฉลี่ยตราสาร (Duration)', String(st.portfolio_duration_period||'').trim(), bondish],
                  ['Yield to Maturity (%)', val(st.yield_to_maturity), bondish]].filter(x=>x[2] && x[1]);
-  if (!alloc.length && !top5.length && !extra.length) return '';
+  if (!alloc.length && !top5.length && !extra.length && !(s.port && s.port.n)) return '';
   const asOf = s.portAsOf || s.asOf;
   const row = (x, i) => `<li>${i===null?'':`<span class="sw" style="background:var(${DONUT[i%DONUT.length]})"></span>`}`
     + `<span class="nm" title="${esc(x[0])}">${esc(x[0])}</span><span class="pv">${x[1].toFixed(2)}%</span></li>`;
   const total = alloc.reduce((t,x)=>t+x[1], 0);
   const parts = [];
   if (alloc.length) parts.push(`<h5>สัดส่วนประเภททรัพย์สิน (%NAV)</h5><ul class="port-list">${alloc.map(row).join('')}</ul>`);
-  if (top5.length) parts.push(`<h5>ทรัพย์สิน 5 อันดับแรก</h5><ul class="port-list">${top5.map(x=>row(x,null)).join('')}</ul>`);
+  const pf = s.port || {};
+  if (pf.top && pf.top.length){
+    // ตัวเลข "เทียบเท่าถือกี่ตัว" = 10000/HHI อ่านง่ายกว่าค่า HHI ดิบ
+    const eff = pf.hhi ? Math.max(1, Math.round(10000/pf.hhi)) : null;
+    parts.push(`<h5>ทรัพย์สิน ${pf.top.length} อันดับแรก${pf.period?` · งวด ${esc(pf.period)}`:''}</h5>`
+      + `<ul class="port-list">${pf.top.map(x=>row(x,null)).join('')}</ul>`
+      + `<p class="meta" style="margin:6px 0 0">ถือทั้งหมด ${pf.n.toLocaleString()} รายการ`
+      + (eff ? ` · กระจายเทียบเท่าถือ ${eff.toLocaleString()} รายการเท่าๆ กัน` : '') + `</p>`);
+  }
+  else if (top5.length) parts.push(`<h5>ทรัพย์สิน 5 อันดับแรก</h5><ul class="port-list">${top5.map(x=>row(x,null)).join('')}</ul>`);
   if (alloc.length && Math.abs(total-100) >= 0.5)
     parts.push(`<p class="meta" style="margin:6px 0 0">รวมที่แฟกต์ชีตระบุ ${total.toFixed(2)}% ของ NAV — ส่วนที่เหลือไม่ได้แจกแจงไว้</p>`);
   if (extra.length) parts.push(`<h5>ข้อมูลประกอบ</h5><ul class="port-list">${extra

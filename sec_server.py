@@ -300,6 +300,27 @@ def dividend_stats(rows, nav, cls, pays_dividend):
     return out
 
 
+def portfolio_summary(rows):
+    """พอร์ตเต็มรายไตรมาส -> จำนวนหลักทรัพย์ที่ถือ, 10 อันดับแรก, และค่าความกระจุกตัว HHI.
+
+    top5-holdings บอกแค่ 5 ตัวแรก จึงบอกไม่ได้ว่ากองถือทั้งหมดกี่ตัว ชุดนี้บอกได้
+    HHI = ผลรวมของกำลังสองของสัดส่วน (0-10000) ยิ่งสูงยิ่งกระจุก กระจายเท่ากัน 100 ตัว = 100"""
+    items, period = [], ""
+    for r in rows:
+        name = re.sub(r"\s+", " ", str(r.get("issue_code") or r.get("issuer") or "")).strip()
+        pct = to_num(r.get("percent_nav"))
+        if not name or pct is None or pct <= 0:
+            continue
+        items.append([name[:60], round(pct, 3)])
+        period = max(period, str(r.get("period") or ""))
+    if not items:
+        return {}
+    items.sort(key=lambda x: -x[1])
+    return {"n": len(items), "period": period,
+            "hhi": round(sum((p / 100) ** 2 for _, p in items) * 10000),
+            "top": items[:10]}
+
+
 def fund_price(rows):
     """ราคาต่อหน่วยล่าสุดของชนิดหน่วยลงทุนนี้ -> {navDate, nav, sell, buy}.
     sell คือราคาที่ผู้ลงทุนจ่ายตอนซื้อ buy คือราคาที่ได้รับตอนขายคืน ส่วนต่างคือ
@@ -524,6 +545,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     nav_rows = pick(raw.get("nav") or [], cls, True, False)
     url_rows, bench_rows = get("urls"), get("bench")
     pays_div = bool(div_rows) and str(div_rows[0].get("dividend_policy")).upper() == "Y"
+    port = portfolio_summary(raw.get("port") or [])
     sd_by, cal, cal_bm = perf_extra(perf_rows)
     today = date.today()
 
@@ -545,7 +567,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "taxType": tax,
         "feeder": bool(master),
         "master": master,
-        "holdings": "",
+        "holdings": port.get("n", ""),   # เติมได้เป็นครั้งแรกจากพอร์ตเต็ม ไม่ใช่เดาจาก 5 อันดับแรก
         "top5": round(sum(to_num(h.get("asset_ratio")) or 0 for h in top5), 2) if top5 else "",
         "riskLevel": str(risk_level) if risk_level else "",
         "maxDD": abs(to_num(stats.get("maximum_drawdown"))) if to_num(stats.get("maximum_drawdown")) is not None else "",
@@ -592,7 +614,8 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "price": price,                                   # ราคาต่อหน่วย -> หน้าพอร์ต
                    "link": factsheet_link(url_rows),                 # ปุ่มเปิด Fact Sheet ตัวจริง
                    "bench": benchmarks_of(bench_rows),               # เทียบกับดัชนีอะไร
-                   "div": dividend_stats(raw.get("divh") or [], price.get("nav"), cls, pays_div)}
+                   "div": dividend_stats(raw.get("divh") or [], price.get("nav"), cls, pays_div),
+                   "port": port}
     return fund
 
 
