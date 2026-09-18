@@ -193,8 +193,8 @@ function sanitizeFund(f){
     const link = o => (o && typeof o==='object' && typeof o.url==='string' && /^https:\/\//.test(o.url))
       ? {url:cleanStr(o.url,400), asOf:cleanStr(o.asOf,20)} : {};
     const portf = o => { if (!o || typeof o!=='object') return {};
-      const out = {period: cleanStr(o.period,8)};
-      ['n','hhi'].forEach(k=>{ const v = cleanNum(o[k],0,1e6); if (v!=='' && v>0) out[k]=v; });
+      const out = {period: cleanStr(o.period,8), unreliable: o.unreliable===true};
+      ['n','hhi','pctSum'].forEach(k=>{ const v = cleanNum(o[k],0,1e6); if (v!=='' && v>0) out[k]=v; });
       out.top = slices(o.top);
       return out.n ? out : {}; };
     const divi = o => { if (!o || typeof o!=='object') return {};
@@ -575,12 +575,17 @@ function portBlock(f){
   if (alloc.length) parts.push(`<h5>สัดส่วนประเภททรัพย์สิน (%NAV)</h5><ul class="port-list">${alloc.map(row).join('')}</ul>`);
   const pf = s.port || {};
   if (pf.top && pf.top.length){
-    // ตัวเลข "เทียบเท่าถือกี่ตัว" = 10000/HHI อ่านง่ายกว่าค่า HHI ดิบ
-    const eff = pf.hhi ? Math.max(1, Math.round(10000/pf.hhi)) : null;
+    // "เทียบเท่าถือกี่ตัว" = 10000/HHI อ่านง่ายกว่าค่า HHI ดิบ แต่แสดงเฉพาะเมื่อผลรวม %NAV
+    // ใกล้ 100 — ถ้าไม่ใกล้ แปลว่าชุดข้อมูลยังมีแถวสรุปยอดปน ตัวเลขจะเกินจริง
+    // ข้อมูลรอบก่อนไม่มี pctSum จึงตรวจไม่ได้ว่าสะอาดหรือยัง -> ถือว่าเชื่อไม่ได้ไว้ก่อน
+    const ok = !pf.unreliable && pf.hhi && pf.pctSum >= 90 && pf.pctSum <= 110;
+    const eff = ok ? Math.max(1, Math.round(10000/pf.hhi)) : null;
     parts.push(`<h5>ทรัพย์สิน ${pf.top.length} อันดับแรก${pf.period?` · งวด ${esc(pf.period)}`:''}</h5>`
       + `<ul class="port-list">${pf.top.map(x=>row(x,null)).join('')}</ul>`
-      + `<p class="meta" style="margin:6px 0 0">ถือทั้งหมด ${pf.n.toLocaleString()} รายการ`
-      + (eff ? ` · กระจายเทียบเท่าถือ ${eff.toLocaleString()} รายการเท่าๆ กัน` : '') + `</p>`);
+      + `<p class="meta" style="margin:6px 0 0">`
+      + (ok ? `ถือทั้งหมด ${pf.n.toLocaleString()} รายการ · กระจายเทียบเท่าถือ ${eff.toLocaleString()} รายการเท่าๆ กัน`
+            : `ข้อมูลพอร์ตชุดนี้ยังมีแถวสรุปยอดปนอยู่${pf.pctSum?` (รวม ${pf.pctSum}% ของ NAV)`:''} จึงยังนับจำนวนรายการไม่ได้`)
+      + `</p>`);
   }
   else if (top5.length) parts.push(`<h5>ทรัพย์สิน 5 อันดับแรก</h5><ul class="port-list">${top5.map(x=>row(x,null)).join('')}</ul>`);
   if (alloc.length && Math.abs(total-100) >= 0.5)

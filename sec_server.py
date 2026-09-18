@@ -301,22 +301,29 @@ def dividend_stats(rows, nav, cls, pays_dividend):
 
 
 def portfolio_summary(rows):
-    """พอร์ตเต็มรายไตรมาส -> จำนวนหลักทรัพย์ที่ถือ, 10 อันดับแรก, และค่าความกระจุกตัว HHI.
+    """พอร์ตเต็มรายไตรมาส -> จำนวนหลักทรัพย์ที่ถือ, 10 อันดับแรก, ความกระจุกตัว, และผลรวม %NAV.
 
-    top5-holdings บอกแค่ 5 ตัวแรก จึงบอกไม่ได้ว่ากองถือทั้งหมดกี่ตัว ชุดนี้บอกได้
-    HHI = ผลรวมของกำลังสองของสัดส่วน (0-10000) ยิ่งสูงยิ่งกระจุก กระจายเท่ากัน 100 ตัว = 100"""
+    ชุดนี้มีแถวสรุปยอดปนมากับแถวหลักทรัพย์จริง (ไม่มี issue_code หรือเป็น "-" แล้ว %NAV = 100)
+    ถ้านับรวมไปด้วยจำนวนหลักทรัพย์จะเกินจริงและ HHI จะทะลุเพดาน 10000 ไปไกล
+    (มัธยฐานที่วัดได้ก่อนกรองคือ 16,168 ซึ่งเป็นไปไม่ได้) จึงรับเฉพาะแถวที่มีรหัสหลักทรัพย์จริง
+
+    เก็บ pctSum ไว้ด้วยเพื่อให้ตรวจได้ว่ากรองครบหรือยัง — ควรใกล้ 100 ถ้าไม่ใกล้
+    แปลว่ายังมีแถวระดับอื่นปนอยู่ และฝั่งหน้าเว็บจะไม่แสดงค่าความกระจุกตัว"""
     items, period = [], ""
     for r in rows:
-        name = re.sub(r"\s+", " ", str(r.get("issue_code") or r.get("issuer") or "")).strip()
-        pct = to_num(r.get("percent_nav"))
-        if not name or pct is None or pct <= 0:
+        code = re.sub(r"\s+", " ", str(r.get("issue_code") or "")).strip()
+        if not code or code == "-":
             continue
-        items.append([name[:60], round(pct, 3)])
+        pct = to_num(r.get("percent_nav"))
+        if pct is None or pct <= 0:
+            continue
+        items.append([code[:60], round(pct, 3)])
         period = max(period, str(r.get("period") or ""))
     if not items:
         return {}
     items.sort(key=lambda x: -x[1])
-    return {"n": len(items), "period": period,
+    total = sum(p for _, p in items)
+    return {"n": len(items), "period": period, "pctSum": round(total, 2),
             "hhi": round(sum((p / 100) ** 2 for _, p in items) * 10000),
             "top": items[:10]}
 
@@ -546,6 +553,10 @@ def assemble_fund(profile, cls, raw, notes=None):
     url_rows, bench_rows = get("urls"), get("bench")
     pays_div = bool(div_rows) and str(div_rows[0].get("dividend_policy")).upper() == "Y"
     port = portfolio_summary(raw.get("port") or [])
+    # ผลรวม %NAV ที่ห่างจาก 100 มาก แปลว่ายังกรองแถวสรุปยอดออกไม่หมด
+    # จำนวนหลักทรัพย์และความกระจุกตัวจะเกินจริง จึงไม่ส่งออกไปให้คิดคะแนน
+    if not (90 <= port.get("pctSum", 0) <= 110):
+        port = dict(port, unreliable=True) if port else {}
     sd_by, cal, cal_bm = perf_extra(perf_rows)
     today = date.today()
 
@@ -567,7 +578,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "taxType": tax,
         "feeder": bool(master),
         "master": master,
-        "holdings": port.get("n", ""),   # เติมได้เป็นครั้งแรกจากพอร์ตเต็ม ไม่ใช่เดาจาก 5 อันดับแรก
+        "holdings": "" if port.get("unreliable") else port.get("n", ""),   # จากพอร์ตเต็ม ไม่ใช่เดาจาก 5 อันดับแรก
         "top5": round(sum(to_num(h.get("asset_ratio")) or 0 for h in top5), 2) if top5 else "",
         "riskLevel": str(risk_level) if risk_level else "",
         "maxDD": abs(to_num(stats.get("maximum_drawdown"))) if to_num(stats.get("maximum_drawdown")) is not None else "",
