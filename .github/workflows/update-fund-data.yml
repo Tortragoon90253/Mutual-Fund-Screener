@@ -37,7 +37,7 @@ jobs:
     permissions:
       contents: write          # force-push the generated data to the `data` branch
     outputs:
-      data_ok: ${{ steps.data.outcome == 'success' }}
+      data_ok: ${{ steps.data.outcome != 'failure' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,6 +55,7 @@ jobs:
 
       - name: Fetch data from SEC Open API
         id: data
+        if: github.event_name != 'push'   # a code push only redeploys the site; fact sheets change monthly
         continue-on-error: true  # still deploy the site (with previous data / manual mode) if this fails
         env:
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
