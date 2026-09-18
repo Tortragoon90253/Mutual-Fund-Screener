@@ -114,14 +114,21 @@ def api_all(path, params=None, max_pages=20):
 
 
 # ---------------------------------------------------------------- helpers
+GROUPING = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
 def to_num(v):
-    """Numbers arrive as float, '1.07', '-0.02', 'ไม่เกิน 1.5', 'T+4' ..."""
+    """Numbers arrive as float, '1.07', '-0.02', 'ไม่เกิน 1.5', 'T+4' ...
+
+    คอมมาคั่นหลักพันต้องตัดทิ้งก่อนจับตัวเลข ไม่งั้น '1,234,567.89' จะอ่านได้แค่ 1,234
+    แล้วกลายเป็น 1234 — ผิดไปพันเท่าโดยไม่มีอะไรฟ้อง และฟิลด์ที่ใช้ตัวนี้มีทั้งมูลค่า
+    ทรัพย์สินสุทธิและมูลค่าหลักทรัพย์ · ตัวคั่นทศนิยมในข้อมูลไทยคือจุดเสมอ"""
     if v is None:
         return None
     if isinstance(v, (int, float)):
         return float(v)
-    m = re.search(r"-?\d+(?:[.,]\d+)?", str(v))
-    return float(m.group(0).replace(",", "")) if m else None
+    m = re.search(r"-?\d+(?:\.\d+)?", GROUPING.sub("", str(v)))
+    return float(m.group(0)) if m else None
 
 
 def class_match(item, cls):

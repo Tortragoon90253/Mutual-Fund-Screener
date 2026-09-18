@@ -148,6 +148,23 @@ const planFunds = (pl) => { const p = pl || activePlan();
   return p.fundIds.map(id=>state.funds.find(f=>f.id===id)).filter(Boolean); };
 function addToPlan(fundId, pl){ const p = pl || activePlan();
   if (!p.fundIds.includes(fundId)) p.fundIds.push(fundId); }
+// กองที่ไม่มีแผนไหนใช้และไม่มีรายการซื้อขายอ้างถึงแล้ว ไม่มีทางมองเห็นได้อีก
+// แต่ยังโผล่ในช่องเลือกกองของรายการซื้อขายและติดไปกับไฟล์ที่ส่งออก
+// ทางเดียวสำหรับการเอากองออกจากระบบ — ถ้าลืมตัดอันใดอันหนึ่ง tx จะชี้ไปกองที่ไม่มีแล้ว
+// แล้วหายเงียบตอน sanitizeState รอบถัดไป โดยผู้ใช้ไม่รู้ว่ารายการซื้อขายหายไป
+function removeFunds(ids){
+  const set = new Set(ids);
+  state.plans.forEach(pl=>{
+    pl.fundIds = pl.fundIds.filter(id=>!set.has(id));
+    set.forEach(id=>delete pl.portfolio[id]);
+  });
+  state.tx = state.tx.filter(t=>!set.has(t.fundId));
+  state.funds = state.funds.filter(f=>!set.has(f.id));
+}
+function pruneLibrary(){
+  state.funds = state.funds.filter(f=>
+    state.plans.some(p=>p.fundIds.includes(f.id)) || state.tx.some(t=>t.fundId===f.id));
+}
 const activePlan = () => state.plans.find(x=>x.id===state.activePlan) || state.plans[0];
 // อ่าน state.profile / .weights / .portfolio ให้ชี้ไปที่แผนที่เลือกอยู่ โค้ดเดิมจึงไม่ต้องแก้ทุกจุด
 // ตั้ง enumerable:false เพื่อไม่ให้ JSON.stringify เก็บซ้ำกับที่อยู่ใน plans อยู่แล้ว
@@ -280,7 +297,9 @@ function sanitizeState(s){
                                   units:u, amount: c==='' ? 0 : u*c});
     });
 
-  return bindPlan({funds, plans, activePlan: planIds.has(active) ? active : plans[0].id,
+  const used = new Set(plans.flatMap(pl=>pl.fundIds).concat(tx.map(t=>t.fundId)));
+  return bindPlan({funds: funds.filter(f=>used.has(f.id)),
+                   plans, activePlan: planIds.has(active) ? active : plans[0].id,
                    tx, showReal: s.showReal===true});
 }
 
@@ -561,7 +580,11 @@ function saveFund(){
     f[fld.k] = fld.t==='check' ? el.checked : fld.t==='number' ? (el.value===''?'':parseFloat(el.value)) : el.value.trim();
   }));
   if (!f.name) return;
-  if (editingId){ const i=state.funds.findIndex(x=>x.id===editingId); state.funds[i] = {...state.funds[i], ...f}; }
+  if (editingId){
+    const i = state.funds.findIndex(x=>x.id===editingId);
+    // กองอาจถูกเอาออกไประหว่างที่ฟอร์มเปิดค้าง — i = -1 จะเขียนลง state.funds[-1] เงียบๆ
+    if (i < 0){ alert('กองที่กำลังแก้ไขไม่อยู่ในแผนนี้แล้ว'); fillForm(null); return; }
+    state.funds[i] = {...state.funds[i], ...f}; }
   else { const nf = {...f, id:uid(), sample:false}; state.funds.push(nf); addToPlan(nf.id); }
   save(); fillForm(null); renderFunds();
 }
@@ -812,11 +835,14 @@ async function addSecFund(b){
   try{
     const fund = await secFetchFund(projId, cls, b.dataset.secsrc);
     const rec = sanitizeFund({...DEFAULT_FUND, ...fund, id:uid(), sample:false}); if (!rec) throw new Error('ข้อมูลกองทุนไม่ครบ');
-    if (dup){ state.funds[state.funds.indexOf(dup)] = sanitizeFund({...dup, ...rec, id:dup.id}) || dup; addToPlan(dup.id); }
-    else { state.funds.push(rec); addToPlan(rec.id); }
+    // ต้องเปิดฟอร์มด้วยตัวที่อยู่ใน state จริง ไม่ใช่ rec ที่มี id ใหม่ซึ่งถูกทิ้งไปตอนรวมกับของเดิม
+    let stored;
+    if (dup){ stored = sanitizeFund({...dup, ...rec, id:dup.id}) || dup;
+              state.funds[state.funds.indexOf(dup)] = stored; addToPlan(dup.id); }
+    else { stored = rec; state.funds.push(rec); addToPlan(rec.id); }
     save(); renderFunds();
     refreshAddButtons();          // กองเดียวกันอาจอยู่ในแท็บอื่นและในผลค้นหาพร้อมกัน
-    fillForm(rec); $('#fundForm').scrollIntoView({behavior:'smooth'});
+    fillForm(stored); $('#fundForm').scrollIntoView({behavior:'smooth'});
   }catch(err){ b.disabled=false; b.textContent='เพิ่ม'; alert('ดึงข้อมูลไม่สำเร็จ: '+err.message); }
 }
 $('#secResults').addEventListener('click', e=>{ const b = e.target.closest('[data-secadd]'); if (b) addSecFund(b); });
@@ -1017,8 +1043,7 @@ $('#fundList').addEventListener('click', async e=>{
     delete pl.portfolio[del];
     state.tx = state.tx.filter(t=>!(t.planId===pl.id && t.fundId===del));
     // ไม่มีแผนไหนใช้แล้วและไม่มีรายการซื้อขายค้างอยู่ จึงเอาออกจากคลังได้
-    if (!state.plans.some(x=>x.fundIds.includes(del)) && !state.tx.some(t=>t.fundId===del))
-      state.funds = state.funds.filter(x=>x.id!==del);
+    pruneLibrary();
     if (editingId===del) fillForm(null);
     save(); renderFunds(); }
 });
@@ -1028,15 +1053,15 @@ $('#btnWipe').addEventListener('click', ()=>{
   state = freshState(); location.reload();
 });
 $('#btnSamples').addEventListener('click',()=>{
-  const old = state.funds.filter(f=>f.sample).map(f=>f.id);
-  state.plans.forEach(pl=>pl.fundIds = pl.fundIds.filter(id=>!old.includes(id)));
+  removeFunds(state.funds.filter(f=>f.sample).map(f=>f.id));
   const fresh = SAMPLES.map(s=>({...s,id:uid(),sample:true}));
-  state.funds = state.funds.filter(f=>!f.sample).concat(fresh);
+  state.funds = state.funds.concat(fresh);
   fresh.forEach(f=>addToPlan(f.id)); save(); renderFunds(); });
 $('#btnClearSamples').addEventListener('click', ()=>{
   const ids = state.funds.filter(f=>f.sample).map(f=>f.id);
-  state.plans.forEach(pl=>{ pl.fundIds = pl.fundIds.filter(id=>!ids.includes(id)); ids.forEach(id=>delete pl.portfolio[id]); });
-  state.funds = state.funds.filter(f=>!f.sample); save(); renderFunds(); });
+  const nTx = state.tx.filter(t=>ids.includes(t.fundId)).length;
+  if (nTx && !confirm(`กองตัวอย่างมีรายการซื้อขาย ${nTx} รายการ จะถูกลบไปด้วย ต้องการลบหรือไม่?`)) return;
+  removeFunds(ids); save(); renderFunds(); });
 $('#btnExport').addEventListener('click', ()=>{
   const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'fund-screener-data.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
@@ -1161,6 +1186,7 @@ function planUI(){
 รายการซื้อขาย ${n} รายการในแผนนี้จะถูกลบด้วย`:''))) return;
     state.tx = state.tx.filter(t=>t.planId!==cur.id);
     state.plans = state.plans.filter(pl=>pl.id!==cur.id);
+    pruneLibrary();
     switchPlan(state.plans[0].id); });
   $('#pfScope') && $('#pfScope').addEventListener('change', e=>{ pfScopeId = e.target.value; renderHoldings(); });
   $('#txAdd') && $('#txAdd').addEventListener('click', addTx);
