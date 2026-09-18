@@ -1262,9 +1262,15 @@ function renderHome(){
       const eq = r.legs.filter(L=>(ASSET[L.assetClass]||{}).equity).reduce((t,L)=>t+L.w,0);
       if (eq>0.2) al.push([0,'warn', `${r.pl.name} เหลือ ${r.years} ปี แต่มีสินทรัพย์เสี่ยง ${Math.round(eq*100)}% — ระยะสั้นไม่มีเวลารอให้ราคาฟื้น`]);
     });
-    const ends = ov.runs.filter(r=>r.rows && r.monthly>0).sort((a,b)=>a.years-b.years)[0];
+    ov.runs.forEach(r=>{
+      if (r.onPlan == null || r.onPlan <= 0) return;
+      const gap = r.nowValue - r.onPlan;
+      if (gap < -r.onPlan*0.1)
+        al.push([1,'warn', `${r.pl.name} มีจริง ${fmtB(r.nowValue)} แต่ตามแผนควรมี ${fmtB(r.onPlan)} ณ ตอนนี้ — ตามหลังอยู่ ${fmtB(-gap)}`]);
+    });
+    const ends = ov.runs.filter(r=>r.rows && r.monthly>0).sort((a,b)=>a.left-b.left)[0];
     if (ends && ov.runs.length>1 && ov.totMonthly>ends.monthly)
-      al.push([4,'', `ต้องใส่เงินรวม ${fmtB(ov.totMonthly)}/เดือน ไปอีก ${ends.years} ปี แล้วลดเหลือ ${fmtB(ov.totMonthly-ends.monthly)} เมื่อแผน "${ends.pl.name}" ครบกำหนด`]);
+      al.push([4,'', `ต้องใส่เงินรวม ${fmtB(ov.totMonthly)}/เดือน ไปอีก ${ends.left} ปี แล้วลดเหลือ ${fmtB(ov.totMonthly-ends.monthly)} เมื่อแผน "${ends.pl.name}" ครบกำหนด`]);
   }
   al.sort((a,b)=>a[0]-b[0]);
   $('#homeAlerts').innerHTML = al.length
@@ -1295,23 +1301,30 @@ function renderOverview(){
   const totMonthly = runs.reduce((t,r)=>t+r.monthly, 0);
   const totMoney = runs.reduce((t,r)=>t+r.money, 0);
   const endValue = runs.reduce((t,r)=>t + (r.rows ? r.rows[r.rows.length-1].value : 0), 0);
-  const maxY = runs.length ? Math.max(...runs.map(r=>r.years)) : 1;
+  const maxY = runs.length ? Math.max(...runs.map(r=>r.left)) : 1;
+  const anyStarted = runs.some(r=>r.started);
 
   $('#ovSub').textContent = series
-    ? `กรณีกลาง หลังหักค่าธรรมเนียม · ${runs.filter(r=>r.rows).length} แผนที่จัดพอร์ตแล้ว จาก ${runs.length} แผน`
+    ? (anyStarted
+        ? `เริ่มจากมูลค่าพอร์ตจริงวันนี้ แล้วเดินต่อตามเวลาที่เหลือของแต่ละแผน · ปี 0 คือวันนี้`
+        : `กรณีกลาง หลังหักค่าธรรมเนียม · ยังไม่มีรายการซื้อ จึงคิดจากแผนที่ตั้งไว้`)
     : 'ยังไม่มีแผนไหนจัดพอร์ต — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน';
 
-  const order = [...runs].sort((a,b)=>a.years-b.years);
-  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th class="num">ปี</th><th class="num">เสี่ยง</th><th class="num">ต่อเดือน</th><th class="num">กอง</th><th>ช่วงเวลา</th><th class="num">จะใส่รวม</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
-    order.map((r,i)=>`<tr${r.pl.id===state.activePlan?' class="sel"':''}>
+  const order = [...runs].sort((a,b)=>a.left-b.left);
+  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th class="num">ปี</th><th class="num">เหลือ</th><th class="num">ต่อเดือน</th><th>ช่วงเวลา</th><th class="num">มีจริงตอนนี้</th><th class="num">เทียบกับแผน</th><th class="num">จะใส่อีก</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
+    order.map((r,i)=>{
+      const diff = r.onPlan!=null ? r.nowValue - r.onPlan : null;
+      return `<tr${r.pl.id===state.activePlan?' class="sel"':''}>
       <td><button type="button" class="linklike" data-goplan="${esc(r.pl.id)}">${esc(r.pl.name)}</button></td>
       <td class="num">${r.years}</td>
-      <td class="num">${esc(r.pl.profile.riskTol)}</td>
+      <td class="num">${r.started?r.left:'–'}</td>
       <td class="num">${r.monthly?fmtB(r.monthly):'–'}</td>
-      <td class="num">${r.pl.fundIds.length}</td>
-      <td><span class="bar-cell"><i style="width:${Math.round(r.years/maxY*100)}%;background:var(${DONUT[i%DONUT.length]})"></i></span></td>
-      <td class="num">${fmtB(r.money)}</td>
-      <td class="num">${r.rows?fmtB(r.rows[r.rows.length-1].value):'<span class="muted">ยังไม่ได้จัดพอร์ต</span>'}</td></tr>`).join('')}</tbody>`;
+      <td><span class="bar-cell"><i style="width:${Math.round(r.left/maxY*100)}%;background:var(${DONUT[i%DONUT.length]})"></i></span></td>
+      <td class="num">${r.started?fmtB(r.nowValue):'<span class="muted">ยังไม่เริ่ม</span>'}</td>
+      <td class="num" ${diff!=null?`style="color:var(${diff>=0?'--good':'--bad'})"`:''}>${diff!=null?`${diff>=0?'+':'−'}${fmtB(Math.abs(diff))}`:'–'}</td>
+      <td class="num">${fmtB(r.monthly*12*r.left)}</td>
+      <td class="num">${r.rows?fmtB(r.rows[r.rows.length-1].value):'<span class="muted">ยังไม่ได้จัดพอร์ต</span>'}</td></tr>`;
+    }).join('')}</tbody>`;
   document.querySelectorAll('[data-goplan]').forEach(b=>b.addEventListener('click',()=>{
     switchPlan(b.dataset.goplan); showSection('plan'); }));
 
@@ -1339,7 +1352,7 @@ function renderOverview(){
         {label:'เงินที่ใส่ไปสะสม', data:series.map(r=>r.principal), borderColor:C.put, borderDash:[5,4],
          fill:false, tension:0, pointRadius:0, borderWidth:2}]},
       options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-        scales:{x:{title:{display:true,text:'ปีที่'},grid:{color:C.grid}},
+        scales:{x:{title:{display:true,text:anyStarted?'ปีนับจากวันนี้':'ปีที่'},grid:{color:C.grid}},
                 y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
         plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
   } else if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; }
@@ -1471,19 +1484,36 @@ function planRun(pl){
   const years = Math.max(1, Math.round(num(p.years,1)));
   const lump = p.mode==='dca' ? 0 : num(p.lump);
   const monthly = p.mode==='lump' ? 0 : num(p.monthly);
-  return {pl, legs, years, lump, monthly, money: lump + monthly*12*years,
-          rows: legs.length ? simulate({lump, monthly, years, legs}) : null};
+  const planned = legs.length ? simulate({lump, monthly, years, legs}) : null;
+
+  // ถ้าลงเงินไปแล้วจริง ให้คาดการณ์ต่อจากมูลค่าวันนี้และเวลาที่เหลือ ไม่ใช่เริ่มนับหนึ่งใหม่
+  // จุดเริ่มของแผนคือวันที่ซื้อครั้งแรก — รายการที่ไม่ระบุวันที่ (ยอดยกมา) จึงไม่นับเป็นจุดเริ่ม
+  const held = holdingRows(pl.id);
+  const nowValue = held.reduce((t,r)=>t+(r.value||0), 0);
+  const nowCost  = held.reduce((t,r)=>t+(r.cost||0), 0);
+  const first = state.tx.filter(t=>t.planId===pl.id && t.date).map(t=>t.date).sort()[0];
+  const elapsed = first ? Math.max(0, (Date.now()-Date.parse(first))/(365.25*864e5)) : 0;
+  const started = nowValue > 0;
+  const left = started ? Math.max(1, Math.round(years - elapsed)) : years;
+  const rows = started ? (legs.length ? simulate({lump:nowValue, monthly, years:left, legs}) : null) : planned;
+  // มูลค่าที่แผนบอกว่า "ควรมี" ณ เวลาที่ผ่านมาแล้ว ใช้เทียบว่าตามแผนหรือไม่
+  const onPlan = planned && started ? (planned[Math.min(Math.round(elapsed), years)] || planned[0]).value : null;
+  return {pl, legs, years, left, lump, monthly, planned, rows, nowValue, nowCost, elapsed, started, onPlan,
+          gainSoFar: started ? nowValue - nowCost : 0,
+          money: started ? nowCost + monthly*12*left : lump + monthly*12*years};
 }
 function allPlanRuns(){ return state.plans.map(planRun); }
 function combinedSeries(runs){
   const live = runs.filter(r=>r.rows);
   if (!live.length) return null;
-  const maxY = Math.max(...live.map(r=>r.years));
-  const at = (r, y) => r.rows[Math.min(y, r.years)] || r.rows[r.rows.length-1];
+  const maxY = Math.max(...live.map(r=>r.left));
+  const at = (r, y) => r.rows[Math.min(y, r.left)] || r.rows[r.rows.length-1];
+  // แผนที่เริ่มแล้วเริ่มเส้นที่ "มูลค่าวันนี้" ซึ่งรวมกำไรที่ยังไม่ขายไว้ด้วย
+  // เส้นเงินที่ใส่ไปจึงต้องหักกำไรนั้นออก ไม่งั้นจะดูเหมือนใส่เงินมากกว่าที่ใส่จริง
   return Array.from({length: maxY+1}, (_,y)=>({
     year: y,
     value: live.reduce((t,r)=>t + at(r,y).value, 0),
-    principal: live.reduce((t,r)=>t + at(r,y).principal, 0)
+    principal: live.reduce((t,r)=>t + at(r,y).principal - r.gainSoFar, 0)
   }));
 }
 function renderPlan(){
