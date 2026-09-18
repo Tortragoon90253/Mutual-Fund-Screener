@@ -8,6 +8,25 @@ const ASSET = {
   bond:{label:'ตราสารหนี้', exp:3, sd:5, equity:false},
   money_market:{label:'ตลาดเงิน', exp:1.5, sd:1, equity:false}
 };
+/* จุดตัด TER แยกตามประเภทสินทรัพย์ [p10, p25, p50, p75, p90, จำนวนกอง]
+   ใช้เมื่อยังไม่ได้โหลด data/index.json (ซึ่งมีค่าที่คำนวณสดทุกรอบ build)
+   คำนวณจากข้อมูล ก.ล.ต. 4,923 ชนิดหน่วยลงทุน (ก.ย. 2026) */
+const TER_PCT = {
+  global_equity:[0.71,1.32,1.84,2.895,5.0,2117], thai_equity:[0.611,1.29,1.87,2.33,3.21,692],
+  mixed:[0.792,1.2,1.76,2.895,5.35,987],         reit:[1.17,1.279,1.675,2.452,5.0,171],
+  commodity:[0.53,0.73,1.275,1.952,3.21,96],     bond:[0.19,0.41,0.8,1.98,4.807,604],
+  money_market:[0.13,0.19,0.29,0.38,0.732,85]
+};
+const terBreaks = ac => (secStatic && secStatic.terPct && secStatic.terPct[ac]) || TER_PCT[ac] || null;
+// อันดับค่าธรรมเนียมในกลุ่มเดียวกัน: 0 = ถูกที่สุด, 100 = แพงที่สุด
+function terRank(ter, br){
+  const pts = [[0,0],[br[0],10],[br[1],25],[br[2],50],[br[3],75],[br[4],90]];
+  for (let i=1;i<pts.length;i++){
+    const [x0,y0]=pts[i-1], [x1,y1]=pts[i];
+    if (ter<=x1) return x1===x0 ? y1 : y0 + (y1-y0)*(ter-x0)/(x1-x0);
+  }
+  return clamp(90 + 10*(ter-br[4])/Math.max(br[4]*0.5, 0.25), 90, 100);
+}
 const DONUT = ['--d1','--d2','--d3','--d4','--d5','--d6','--d7'];  // สีของ donut พอร์ตกองทุน
 const REGION = {TH:'ไทย', US:'สหรัฐฯ', GLOBAL:'ทั่วโลก', EU:'ยุโรป', ASIA:'เอเชีย', CN:'จีน', JP:'ญี่ปุ่น', EM:'ตลาดเกิดใหม่', OTHER:'อื่นๆ'};
 const HEDGE = {full:'ป้องกันเต็มจำนวน', partial:'ป้องกันบางส่วน', discretion:'ตามดุลพินิจผู้จัดการ', none:'ไม่ป้องกัน', na:'ไม่ทราบ'};
@@ -213,7 +232,14 @@ function evaluate(f, p){
 
   // 4 fees
   { let s; const r=[]; const ter=num(f.ter,NaN), front=num(f.front), back=num(f.back);
+    const br = terBreaks(f.assetClass);
     if (isNaN(ter)){ s=40; r.push(R('warn','ไม่ได้ระบุ TER — ค่าใช้จ่ายรวมคือสิ่งสำคัญที่สุดข้อหนึ่ง')); }
+    else if (br){
+      // เทียบภายในกลุ่มสินทรัพย์เดียวกัน เพราะเส้นตายตัวข้ามกลุ่มให้คะแนนกลับหัว:
+      // TER 0.5% ทำให้กองตลาดเงิน 86% ได้เต็ม แต่กองหุ้นต่างประเทศได้แค่ 7%
+      const rank = terRank(ter, br); s = Math.round(100-rank);
+      r.push(R(rank<=33?'good':rank<=75?'warn':'bad',
+        `TER ${ter}% ต่อปี — ถูกกว่า ${s}% ของกองประเภทเดียวกัน (${a.label} ${br[5].toLocaleString()} กอง)`)); }
     else if (ter<=0.5){ s=100; r.push(R('good',`TER ${ter}% ต่อปี ต่ำมาก`)); }
     else if (ter<=1){ s=80; r.push(R('good',`TER ${ter}% ต่อปี อยู่ในเกณฑ์ดี`)); }
     else if (ter<=1.5){ s=55; r.push(R('warn',`TER ${ter}% ต่อปี ค่อนข้างสูง`)); }
@@ -470,6 +496,10 @@ async function loadStatic(){
   const j = await getJson('data/index.json');
   if (!j || !(Array.isArray(j.items) || Array.isArray(j.rows))) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
   const amcs = (j.amcs && typeof j.amcs==='object') ? j.amcs : {};
+  j.terPct = (j.terPct && typeof j.terPct==='object') ? Object.fromEntries(Object.entries(j.terPct)
+    .filter(([k,v])=>ASSET[k] && Array.isArray(v) && v.length===6
+      && v.every(x=>typeof x==='number' && isFinite(x) && x>=0)
+      && v.slice(0,5).every((x,i,arr)=>i===0 || x>=arr[i-1]))) : null;
   // pre-compute a lowercase search string per share class
   const raw = Array.isArray(j.rows) && Array.isArray(j.fields)
     ? j.rows.filter(Array.isArray).map(row=>Object.fromEntries(j.fields.map((k,i)=>[k,row[i]])))

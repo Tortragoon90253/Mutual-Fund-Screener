@@ -20,6 +20,7 @@ import re
 import shutil
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
@@ -217,6 +218,57 @@ def digest(index_items, amc_files):
     return h.hexdigest()
 
 
+def quantile(values, p):
+    v = sorted(values)
+    i = (len(v) - 1) * p
+    lo = int(i)
+    return v[lo] if lo == i else v[lo] + (v[lo + 1] - v[lo]) * (i - lo)
+
+
+def ter_breaks(amc_files, min_n=30):
+    """TER percentile breakpoints per asset class -> [p10, p25, p50, p75, p90, n].
+    What counts as cheap only means something inside one asset class: a flat 0.5% line rates
+    86% of money market classes perfect and only 7% of global equity ones."""
+    by = {}
+    for recs in amc_files.values():
+        for f in recs.values():
+            t = f.get("ter")
+            if isinstance(t, (int, float)) and t > 0:
+                by.setdefault(f.get("assetClass") or "", []).append(float(t))
+    return {ac: [round(quantile(v, q), 3) for q in (.10, .25, .50, .75, .90)] + [len(v)]
+            for ac, v in by.items() if ac and len(v) >= min_n}
+
+
+DIAG_FIELDS = ["ter", "riskLevel", "aum", "maxDD", "sd", "trackErr", "ret1", "ret5", "bm5", "holdings"]
+
+
+def build_diag(amc_files):
+    """How complete the SEC data really is. A criterion resting on a field only a few funds
+    report is worse than no criterion, so every candidate field is measured before it is scored."""
+    # seed every candidate at 0 so a field nobody reports shows as 0.0%, not as a missing key
+    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer"] + sec.STATS_EXTRA})
+    n, peer_desc = 0, Counter()
+    for recs in amc_files.values():
+        for f in recs.values():
+            n += 1
+            for k in DIAG_FIELDS:
+                if f.get(k) not in ("", None):
+                    filled[k] += 1
+            meta = f.get("sec") or {}
+            for k in ("alloc", "top5", "peer"):
+                if meta.get(k):
+                    filled[k] += 1
+            for k in (meta.get("stats") or {}):
+                filled[k] += 1
+            for row in (meta.get("peer") or []):
+                peer_desc[row[0]] += 1
+    if not n:
+        return {}
+    return {"n": n,
+            "filled": {k: round(100.0 * c / n, 1) for k, c in sorted(filled.items(), key=lambda x: -x[1])},
+            "peerDesc": peer_desc.most_common(25)}
+
+
 def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -295,6 +347,12 @@ def main():
     except (OSError, ValueError, AttributeError):
         pass
 
+    diag = build_diag(amc_files)
+    if diag:
+        top = ", ".join(f"{k} {v}%" for k, v in list(diag["filled"].items())[:8])
+        log(f"ความครบของข้อมูล ({diag['n']:,} รายการ): {top}")
+        log(f"แถวเทียบกลุ่มที่พบ: {len(diag['peerDesc'])} แบบ" + (f" เช่น {diag['peerDesc'][0][0]}" if diag["peerDesc"] else " (ไม่พบ)"))
+
     funds_dir = os.path.join(args.out, "funds")
     shutil.rmtree(funds_dir, ignore_errors=True)
     for amc, recs in amc_files.items():
@@ -308,6 +366,8 @@ def main():
         "amcs": amc_names,
         "errors": errors[:200],
         "stats": {"apiCalls": sec.CALLS["network"], "seconds": round(time.time() - started)},
+        "terPct": ter_breaks(amc_files),   # เกณฑ์ค่าธรรมเนียมแบบ percentile ในกลุ่มเดียวกัน
+        "diag": diag,                      # ขั้น 0: ความครบของข้อมูล ใช้ตัดสินใจว่าจะสร้างเกณฑ์ใหม่ได้ไหม
         "fields": INDEX_FIELDS,
         "rows": index_items,
     })

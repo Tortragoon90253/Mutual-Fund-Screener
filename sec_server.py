@@ -198,6 +198,35 @@ def holding_rows(rows, by_ratio=False):
     return out[:20]
 
 
+# ---- ขั้น 0: เก็บของที่ ก.ล.ต. ส่งมาแต่โปรแกรมเคยทิ้ง — ยังไม่เอาไปคิดคะแนน จนกว่าจะวัดความครบได้
+STATS_EXTRA = ["sharpe_ratio", "alpha", "beta", "portfolio_turnover_ratio",
+               "portfolio_duration_period", "yield_to_maturity", "recovering_period"]
+PEER_DESC = re.compile(r"ค่าเฉลี่ย|เปอร์เซ็นไทล์|percentile|peer", re.I)
+
+
+def stats_extra(stats):
+    """Raw fact-sheet statistics the scoring engine does not read yet, kept verbatim so a
+    build can measure how many funds actually report them before any criterion relies on one."""
+    out = {}
+    for k in STATS_EXTRA:
+        v = stats.get(k)
+        if v not in (None, "", "-"):
+            out[k] = v
+    return out
+
+
+def peer_rows(rows):
+    """Peer-group average / percentile lines from the performance sheet.
+    map_performance drops these on purpose; here they are kept as [desc, period, value]."""
+    out = []
+    for r in rows:
+        desc = re.sub(r"\s+", " ", str(r.get("performance_type_desc") or "")).strip()
+        val = to_num(r.get("performance_value"))
+        if desc and val is not None and PEER_DESC.search(desc):
+            out.append([desc[:80], str(r.get("reference_period") or "")[:20], val])
+    return out[:40]
+
+
 def years_of(period):
     p = str(period or "").lower()
     m = re.match(r"\s*(\d+)\s*(y|year|ปี)", p)
@@ -418,7 +447,9 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "notes": notes, "missing": missing,
                    "alloc": holding_rows(alloc_rows, by_ratio=True),  # ประเภททรัพย์สิน -> donut
                    "top5": holding_rows(top5),                        # 5 อันดับแรก, เรียงตามอันดับที่รายงาน
-                   "portAsOf": port_asof}
+                   "portAsOf": port_asof,
+                   "stats": stats_extra(stats),                       # ขั้น 0: เก็บไว้วัด ยังไม่คิดคะแนน
+                   "peer": peer_rows(perf_rows)}
     return fund
 
 
