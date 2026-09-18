@@ -394,6 +394,15 @@ function simulate({lump, monthly, years, legs, z=0, terOverride=null, noLoad=fal
 }
 
 /* ============ UI: tabs ============ */
+/* สามส่วนหลักบนแถบบน — วางแผนลงทุนคือส่วนเดียวที่ใช้งานได้ตอนนี้ */
+document.querySelectorAll('.mainnav button').forEach(b=>b.addEventListener('click',()=>showSection(b.dataset.sec)));
+function showSection(sec){
+  if (!$('#section-'+sec)) return;
+  document.querySelectorAll('.mainnav button').forEach(b=>b.classList.toggle('active', b.dataset.sec===sec));
+  document.querySelectorAll('.section').forEach(el=>el.classList.toggle('active', el.id==='section-'+sec));
+  try{ localStorage.setItem(KEY+'.sec', sec); }catch(e){}
+}
+
 document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
 function showTab(t){
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
@@ -511,9 +520,6 @@ function drawPort(id){
         tooltip:{callbacks:{label:c=>` ${c.label}: ${c.parsed.toFixed(2)}%`}}}}
   });
 }
-// Chart.js bakes the palette in when the chart is built, so a theme flip needs a redraw
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ()=>
-  document.querySelectorAll('#fundList details.port[open]').forEach(d=>drawPort(d.dataset.port)));
 
 function renderFunds(){
   $('#fundCount').textContent = state.funds.length;
@@ -603,6 +609,7 @@ async function secInit(){
     const when = secStatic.generated ? new Date(secStatic.generated).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
     const scope = secStatic.mode==='watchlist' ? 'เฉพาะกองในรายการติดตาม' : 'ทุกกองที่เปิดขาย';
     status.textContent = `ข้อมูลจาก ก.ล.ต. ${secStatic.items.length.toLocaleString('th-TH')} ชนิดหน่วยลงทุน (${scope}) · อัปเดตล่าสุด ${when}`;
+    const stamp = $('#dataStamp'); if (stamp) stamp.textContent = `ก.ล.ต. · ${secStatic.items.length.toLocaleString('th-TH')} หน่วย · ${when}`;
     $('#secQ').placeholder = 'ชื่อย่อ / ชื่อกองทุน / บลจ. เช่น S&P500, ปันผล, กสิกร';
     $('#secForm').style.display = 'flex'; renderFunds();
   }catch(e){
@@ -861,7 +868,7 @@ $('#fundList').addEventListener('click', async e=>{
 });
 $('#btnWipe').addEventListener('click', ()=>{
   if (!confirm('ลบข้อมูลโปรไฟล์ กองทุน และพอร์ตทั้งหมดที่เก็บในเบราว์เซอร์นี้? (ควร Export JSON ไว้ก่อนถ้าต้องการเก็บ)')) return;
-  try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'.tab'); }catch(e){}
+  try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'.tab'); localStorage.removeItem(KEY+'.sec'); }catch(e){}
   state = freshState(); location.reload();
 });
 $('#btnSamples').addEventListener('click',()=>{ state.funds = state.funds.filter(f=>!f.sample).concat(SAMPLES.map(s=>({...s,id:uid(),sample:true}))); save(); renderFunds(); });
@@ -1025,4 +1032,10 @@ buildForm();
 renderFunds();
 secInit();
 try{ const t = localStorage.getItem(KEY+'.tab'); if (t && $('#panel-'+t)) showTab(t); }catch(e){}
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ()=>{ if ($('#panel-plan').classList.contains('active')) renderPlan(); });
+try{ const sec = localStorage.getItem(KEY+'.sec'); if (sec) showSection(sec); }catch(e){}
+// Chart.js bakes the palette in when a chart is built, so switching theme needs a redraw.
+// The theme is set by data-theme on <html>, not by the OS, so watch the attribute.
+new MutationObserver(()=>{
+  document.querySelectorAll('#fundList details.port[open]').forEach(d=>drawPort(d.dataset.port));
+  if ($('#panel-plan').classList.contains('active')) renderPlan();
+}).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});

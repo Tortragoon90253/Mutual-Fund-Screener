@@ -8,42 +8,46 @@
 <title>คัดกรองกองทุน & วางแผนลงทุน</title>
 <style>
 :root{
+  /* โทนเข้มเป็นค่าเริ่มต้น — ธีมสว่างยังใช้ได้ด้วย <html data-theme="light"> */
+  --bg:#101311; --surface:#181C19; --surface-2:#1F2420; --text:#E8EAE6; --muted:#98A199; --border:#2A312C;
+  --accent:#4FB894; --accent-soft:#1C3A30; --on-accent:#0C1310;
+  --good:#34C77B; --good-soft:#16301F; --warn:#D9A441; --warn-soft:#332A14; --bad:#E5674E; --bad-soft:#39211C;
+  --c-bad:#E5674E; --c-mid:#4FB894; --c-good:#5B9BE5; --c-principal:#7C857E; --c-real:#D9A441; --grid:#242B26;
+  --d1:#4FB894; --d2:#C97B5A; --d3:#5B9BE5; --d4:#D9A441; --d5:#B29AE0; --d6:#8FB04F; --d7:#7C857E;
+  --radius:10px; --shadow:none;
+  --mono:ui-monospace,"Cascadia Mono","Consolas","DejaVu Sans Mono",monospace;
+}
+:root[data-theme="light"]{
   --bg:#f6f5f1; --surface:#ffffff; --surface-2:#f0eee8; --text:#1d1c1a; --muted:#6b675f; --border:#e0ddd4;
   --accent:#1f6f5c; --accent-soft:#dcefe8; --on-accent:#ffffff;
   --good:#1f7a4d; --good-soft:#dff2e6; --warn:#9a6a00; --warn-soft:#fbf0d4; --bad:#b3372c; --bad-soft:#f8e0dc;
   --c-bad:#c2553f; --c-mid:#1f6f5c; --c-good:#3a67b8; --c-principal:#8f8a80; --c-real:#9a6a00; --grid:#e7e4dc;
   --d1:#1f6f5c; --d2:#c2553f; --d3:#3a67b8; --d4:#b58a2b; --d5:#7a5c8f; --d6:#5c7a2e; --d7:#8f8a80;
-  --radius:12px; --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#151513; --surface:#1f1e1b; --surface-2:#292824; --text:#ecebe6; --muted:#a39f95; --border:#36342f;
-    --accent:#5cc3a5; --accent-soft:#1e3a32; --on-accent:#0f1a17;
-    --good:#6fd39c; --good-soft:#1d3527; --warn:#e6b84f; --warn-soft:#3a2f16; --bad:#f08a7c; --bad-soft:#3f2320;
-    --c-bad:#f08a7c; --c-mid:#5cc3a5; --c-good:#86a9ee; --c-principal:#8a867c; --c-real:#e6b84f; --grid:#2e2d29;
-    --d1:#5cc3a5; --d2:#f08a7c; --d3:#86a9ee; --d4:#e6b84f; --d5:#bfa0d4; --d6:#a8c471; --d7:#a39f95;
-    --shadow:none;
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#151513; --surface:#1f1e1b; --surface-2:#292824; --text:#ecebe6; --muted:#a39f95; --border:#36342f;
-  --accent:#5cc3a5; --accent-soft:#1e3a32; --on-accent:#0f1a17;
-  --good:#6fd39c; --good-soft:#1d3527; --warn:#e6b84f; --warn-soft:#3a2f16; --bad:#f08a7c; --bad-soft:#3f2320;
-  --c-bad:#f08a7c; --c-mid:#5cc3a5; --c-good:#86a9ee; --c-principal:#8a867c; --c-real:#e6b84f; --grid:#2e2d29;
-  --d1:#5cc3a5; --d2:#f08a7c; --d3:#86a9ee; --d4:#e6b84f; --d5:#bfa0d4; --d6:#a8c471; --d7:#a39f95;
-  --shadow:none;
+  --shadow:0 1px 2px rgba(0,0,0,.05),0 2px 8px rgba(0,0,0,.04);
 }
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--bg);color:var(--text);font-family:"Leelawadee UI","Noto Sans Thai","Sukhumvit Set","Thonburi",Tahoma,system-ui,sans-serif;font-size:15px;line-height:1.6;overflow-x:hidden}
-.wrap{max-width:1120px;margin:0 auto;padding:20px 16px 48px}
-header h1{font-size:1.6rem;margin:0 0 2px;line-height:1.3}
+.wrap{max-width:1360px;margin:0 auto;padding:0 18px 48px}
+/* แถบบนคงที่ — สามส่วนหลักของโปรแกรม */
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;height:52px;margin:0 -18px 16px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:9px;font-size:.95rem;font-weight:700;letter-spacing:.04em;color:var(--text);flex:0 0 auto}
+.mainnav{display:flex;gap:2px;flex:0 0 auto}
+.mainnav button{font:inherit;font-size:.88rem;font-weight:500;border:0;background:transparent;color:var(--muted);padding:7px 13px;border-radius:7px;cursor:pointer}
+.mainnav button:hover{color:var(--text)}
+.mainnav button.active{background:var(--surface-2);color:var(--text);font-weight:600}
+.stamp{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap}
+.section{display:none}.section.active{display:block}
+header h1{font-size:1.5rem;margin:0 0 2px;line-height:1.3}
 header p{margin:0;color:var(--muted);font-size:.92rem}
 header a{color:var(--accent)}
-.tabs{display:flex;gap:6px;margin:18px 0 16px;overflow-x:auto;padding-bottom:2px}
-.tabs button{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:8px 14px;border-radius:999px;font:inherit;font-weight:500;cursor:pointer}
-.tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.tabs{display:flex;gap:4px;margin:0 0 16px;overflow-x:auto;padding-bottom:2px}
+.tabs button{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--muted);padding:6px 13px;border-radius:7px;font:inherit;font-size:.87rem;font-weight:500;cursor:pointer}
+.tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
 .panel{display:none}.panel.active{display:block}
+.soon{max-width:640px}
+.soon h2{font-size:1.15rem;margin:0 0 6px}
+.soon ul{margin:10px 0 0;padding-left:20px;color:var(--muted);font-size:.9rem;line-height:1.8}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px;box-shadow:var(--shadow)}
 .card h2{font-size:1.15rem;margin:0 0 4px}
 .card h3{font-size:1rem;margin:16px 0 8px}
@@ -80,7 +84,7 @@ legend{font-weight:600;padding:0 6px;font-size:.95rem}
 .port-list li{display:flex;gap:8px;align-items:baseline;padding:2px 0}
 .port-list .sw{width:10px;height:10px;border-radius:3px;flex:0 0 auto;align-self:center}
 .port-list .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.port-list .pv{color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
+.port-list .pv{color:var(--muted);font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums;flex:0 0 auto}
 .tag{display:inline-block;font-size:.74rem;padding:1px 8px;border-radius:999px;background:var(--warn-soft);color:var(--warn);font-weight:600;vertical-align:middle}
 .tag.sec{background:var(--accent-soft);color:var(--accent);margin-left:4px}
 .sec-row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}
@@ -96,7 +100,7 @@ label.f.check input,label.f.check select{border-color:var(--c-good);box-shadow:0
 .chips button .n{opacity:.7;margin-left:4px}
 .reco-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border)}
 .reco-rank{font-weight:700;font-size:1.05rem;color:var(--muted);text-align:center;padding-top:2px}
-.reco-facts{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.82rem;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
+.reco-facts{display:flex;flex-wrap:wrap;gap:4px 12px;font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-top:2px;font-variant-numeric:tabular-nums}
 .reco-why{font-size:.84rem;margin-top:4px}
 .reco-why .good{color:var(--good)} .reco-why .warn{color:var(--warn)}
 .reco-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
@@ -105,11 +109,13 @@ label.f.check input,label.f.check select{border-color:var(--c-good);box-shadow:0
 .form-legend .lg.need{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn)}
 .form-legend .lg.check{color:var(--c-good);border:1px solid var(--c-good)}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{border-collapse:collapse;width:100%;font-size:.9rem}
-th,td{padding:8px 8px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
-th{color:var(--muted);font-weight:500;font-size:.82rem}
-td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-.cell{display:inline-block;min-width:38px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:600;font-size:.82rem;font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:.87rem}
+th,td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:.7rem;letter-spacing:.05em;text-transform:uppercase}
+tbody tr:hover{background:var(--surface-2)}
+td.num,th.num{text-align:right}
+td.num{font-family:var(--mono);font-size:.84rem;font-variant-numeric:tabular-nums}
+.cell{display:inline-block;min-width:38px;text-align:center;border-radius:5px;padding:1px 6px;font-family:var(--mono);font-weight:600;font-size:.8rem;font-variant-numeric:tabular-nums}
 .s-good{background:var(--good-soft);color:var(--good)}
 .s-warn{background:var(--warn-soft);color:var(--warn)}
 .s-bad{background:var(--bad-soft);color:var(--bad)}
@@ -126,14 +132,14 @@ details.fund-detail summary{cursor:pointer;font-weight:600;list-style-position:o
 .kpis{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));margin-bottom:16px}
 .kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .kpi .k{color:var(--muted);font-size:.82rem}
-.kpi .v{font-size:1.3rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3}
+.kpi .v{font-family:var(--mono);font-size:1.25rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.3}
 .kpi .d{font-size:.8rem;color:var(--muted)}
 .chart-box{position:relative;height:340px}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
 .seg button{font:inherit;border:0;background:var(--surface);color:var(--text);padding:6px 14px;cursor:pointer}
 .seg button.active{background:var(--accent);color:var(--on-accent)}
-.callout{border-left:4px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:8px;margin:10px 0;font-size:.92rem}
-.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.callout{border:1px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:8px;margin:10px 0;font-size:.92rem}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft);color:var(--text)}
 .two{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .two>*,.card{min-width:0}
 @media (max-width:760px){.two{grid-template-columns:minmax(0,1fr)}.chart-box{height:280px}header h1{font-size:1.3rem}}
@@ -144,9 +150,55 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 </head>
 <body>
 <div class="wrap">
-<header>
-  <h1>โปรแกรมคัดกรองกองทุน & วางแผนการลงทุน</h1>
-  <p>เกณฑ์ 8 ข้อก่อนเลือกซื้อกองทุน/ETF อ้างอิงจากคลิป <a href="https://youtu.be/YGXO27A9Ih4" target="_blank" rel="noopener">Money Matters EP.337</a> · เปรียบเทียบลงทุนก้อนเดียว vs DCA พร้อมคาดการณ์รายปี</p>
+<div class="topbar">
+  <span class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 15.5 L7 9.5 L11 12 L17 4"/><path d="M3 17.5 h14"/></svg>
+    FUNDSCOPE
+  </span>
+  <nav class="mainnav" role="tablist">
+    <button data-sec="home">หน้าแรก</button>
+    <button data-sec="plan" class="active">วางแผนลงทุน</button>
+    <button data-sec="port">พอร์ตของฉัน</button>
+  </nav>
+  <span class="stamp" id="dataStamp"></span>
+</div>
+
+<!-- HOME -->
+<div class="section" id="section-home">
+  <div class="card soon">
+    <h2>หน้าแรก — ความเคลื่อนไหวของกองทุน</h2>
+    <p class="sub">ยังไม่เปิดใช้งาน กำลังพัฒนา</p>
+    <p style="margin:0;font-size:.92rem">หน้านี้จะรวมสิ่งที่เปลี่ยนไปนับจากข้อมูลรอบก่อน — ไม่ใช่ข่าวจากสำนักข่าว เพราะ ก.ล.ต. ไม่มี API ข่าว แต่เป็นการเทียบข้อมูลสองรอบ:</p>
+    <ul>
+      <li>กองที่เพิ่งส่ง Fact Sheet ใหม่</li>
+      <li>ประกาศจ่ายปันผล (ต้องต่อ endpoint <code>dividend-history</code>)</li>
+      <li>กองเปิดใหม่ที่กำลังเสนอขาย (endpoint <code>ipos</code>)</li>
+      <li>ค่าธรรมเนียมหรือระดับความเสี่ยงที่เปลี่ยน</li>
+      <li>สัดส่วนทรัพย์สินที่ขยับจากรอบก่อน</li>
+    </ul>
+    <p class="muted" style="font-size:.86rem;margin:12px 0 0">ต้องเก็บข้อมูลรอบก่อนไว้เปรียบเทียบก่อน จึงจะเริ่มมีอะไรให้แสดง</p>
+  </div>
+</div>
+
+<!-- PORTFOLIO -->
+<div class="section" id="section-port">
+  <div class="card soon">
+    <h2>พอร์ตของฉัน</h2>
+    <p class="sub">ยังไม่เปิดใช้งาน กำลังพัฒนา</p>
+    <p style="margin:0;font-size:.92rem">หน้านี้จะติดตามมูลค่าพอร์ตจริง กำไร/ขาดทุน และค่าธรรมเนียมที่จ่ายไปจริง ยังต้องเพิ่มอีกสองอย่าง:</p>
+    <ul>
+      <li>ราคาต่อหน่วย (<code>last_val</code>) — ก.ล.ต. ส่งมาอยู่แล้วทุกรอบ แต่โปรแกรมยังไม่ได้เก็บ</li>
+      <li>จำนวนหน่วยและต้นทุนที่คุณกรอกเอง — ก.ล.ต. ไม่รู้ว่าคุณถืออะไร</li>
+    </ul>
+    <p class="muted" style="font-size:.86rem;margin:12px 0 0">ตอนนี้ "จัดพอร์ต" ในหน้าวางแผนเก็บเป็นสัดส่วน % เท่านั้น ยังไม่ใช่จำนวนหน่วยจริง</p>
+  </div>
+</div>
+
+<!-- PLAN -->
+<div class="section active" id="section-plan">
+<header style="margin:0 0 14px">
+  <h1>คัดกรองกองทุน & วางแผนการลงทุน</h1>
+  <p>เกณฑ์ 8 ข้อก่อนเลือกซื้อกองทุน/ETF อ้างอิงจากคลิป <a href="https://youtu.be/YGXO27A9Ih4" target="_blank" rel="noopener">Money Matters EP.337</a></p>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -306,6 +358,7 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     </div>
   </div>
 </section>
+</div><!-- /section-plan -->
 
 <footer>
   เครื่องมือนี้จัดทำเพื่อการศึกษาและช่วยจัดระเบียบการตัดสินใจเท่านั้น ไม่ใช่คำแนะนำการลงทุนเฉพาะบุคคล ผลการคาดการณ์ใช้สมมติฐานผลตอบแทนคงที่ ผลตอบแทนในอดีตไม่ได้รับประกันผลตอบแทนในอนาคต ควรอ่านหนังสือชี้ชวนก่อนตัดสินใจลงทุน · ข้อมูลที่กรอกเก็บไว้ในเบราว์เซอร์นี้เท่านั้น ไม่ถูกส่งไปที่ใด
