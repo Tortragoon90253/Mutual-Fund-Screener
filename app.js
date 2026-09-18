@@ -133,15 +133,21 @@ let state = load() || bindPlan(freshState());
    รับความเสี่ยงได้ไม่เท่ากัน) · คลัง funds ใช้ร่วมกันทุกแผน เพราะข้อมูลกองเป็นข้อเท็จจริงของกอง
    ไม่ขึ้นกับว่าใครวางแผนอะไร · เก็บซ้ำในแต่ละแผนแล้วจะอัปเดตไม่ตรงกัน */
 function freshPlan(name){
-  return {id:uid(), name: name || 'แผนหลัก',
+  return {id:uid(), name: name || 'แผนหลัก', fundIds: [],
     profile:{goal:'wealth', years:10, riskTol:'6', lump:100000, monthly:5000, inflation:2, mode:'mix'},
     weights: Object.fromEntries(CRIT.map(c=>[c.k,c.w])), portfolio:{}};
 }
 function freshState(){
-  const pl = freshPlan();
-  return {funds: SAMPLES.map(s=>({...s, id:uid(), sample:true})),
-          plans:[pl], activePlan: pl.id, tx: [], showReal:false};
+  const funds = SAMPLES.map(s=>({...s, id:uid(), sample:true}));
+  const pl = freshPlan(); pl.fundIds = funds.map(f=>f.id);
+  return {funds, plans:[pl], activePlan: pl.id, tx: [], showReal:false};
 }
+// funds คือคลังกลาง (ข้อมูลกองเป็นข้อเท็จจริงของกอง) · fundIds คือกองที่แผนนี้เลือกไว้
+// เอากองออกจากแผนหนึ่งต้องไม่กระทบแผนอื่นที่เลือกกองเดียวกัน
+const planFunds = (pl) => { const p = pl || activePlan();
+  return p.fundIds.map(id=>state.funds.find(f=>f.id===id)).filter(Boolean); };
+function addToPlan(fundId, pl){ const p = pl || activePlan();
+  if (!p.fundIds.includes(fundId)) p.fundIds.push(fundId); }
 const activePlan = () => state.plans.find(x=>x.id===state.activePlan) || state.plans[0];
 // อ่าน state.profile / .weights / .portfolio ให้ชี้ไปที่แผนที่เลือกอยู่ โค้ดเดิมจึงไม่ต้องแก้ทุกจุด
 // ตั้ง enumerable:false เพื่อไม่ให้ JSON.stringify เก็บซ้ำกับที่อยู่ใน plans อยู่แล้ว
@@ -225,8 +231,12 @@ function sanitizePlan(raw, fundIds){
   CRIT.forEach(c=>{ const w = cleanNum(r.weights?.[c.k],0,100); weights[c.k] = w==='' ? c.w : w; });
   if (r.portfolio && typeof r.portfolio==='object') Object.entries(r.portfolio).forEach(([k,v])=>{
     if (fundIds.has(k)) portfolio[k] = cleanNum(v,0,100000) || 0; });
+  // ข้อมูลรุ่นก่อนไม่มี fundIds — ตอนนั้นทุกแผนเห็นทุกกองอยู่แล้ว จึงยกมาทั้งหมด
+  const ids = Array.isArray(r.fundIds)
+    ? [...new Set(r.fundIds.filter(id=>fundIds.has(id)))]
+    : [...fundIds];
   return {
-    id: cleanId(r.id), name: cleanStr(r.name,40) || 'แผนหลัก',
+    id: cleanId(r.id), name: cleanStr(r.name,40) || 'แผนหลัก', fundIds: ids,
     profile:{
       goal: cleanEnum(p.goal, ['wealth','retire','income','tax','short'], d.goal),
       years: cleanNum(p.years,1,50) || d.years,
@@ -287,7 +297,8 @@ const cls = s => s>=75 ? 's-good' : s>=50 ? 's-warn' : 's-bad';
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 /* ============ screening ============ */
-function evaluate(f, p){
+function evaluate(f, p, w){
+  const W = w || state.weights;
   const a = ASSET[f.assetClass] || ASSET.mixed;
   const foreign = f.region !== 'TH';
   const years = num(p.years, 1), tol = num(p.riskTol, 6);
@@ -428,8 +439,8 @@ function evaluate(f, p){
     if (has(f.minBuy) && p.mode!=='lump' && num(f.minBuy) > num(p.monthly)){ s-=10; r.push(R('warn',`ซื้อขั้นต่ำ ${fmtB(num(f.minBuy))} สูงกว่าเงิน DCA ต่อเดือน`)); }
     C('c8', s, r); }
 
-  const wsum = CRIT.reduce((t,c)=>t+num(state.weights[c.k]),0) || 1;
-  out.total = Math.round(CRIT.reduce((t,c)=>t+out.crit[c.k].score*num(state.weights[c.k]),0)/wsum);
+  const wsum = CRIT.reduce((t,c)=>t+num(W[c.k]),0) || 1;
+  out.total = Math.round(CRIT.reduce((t,c)=>t+out.crit[c.k].score*num(W[c.k]),0)/wsum);
   out.pass = out.fails.length===0;
   out.grade = !out.pass ? 'F' : out.total>=80?'A': out.total>=65?'B': out.total>=50?'C':'D';
   return out;
@@ -551,7 +562,7 @@ function saveFund(){
   }));
   if (!f.name) return;
   if (editingId){ const i=state.funds.findIndex(x=>x.id===editingId); state.funds[i] = {...state.funds[i], ...f}; }
-  else state.funds.push({...f, id:uid(), sample:false});
+  else { const nf = {...f, id:uid(), sample:false}; state.funds.push(nf); addToPlan(nf.id); }
   save(); fillForm(null); renderFunds();
 }
 /* ---- พอร์ตกองทุนจาก Fact Sheet (ก.ล.ต.) ----
@@ -622,8 +633,9 @@ function drawDonut(canvasId, rows){
 }
 
 function renderFunds(){
-  $('#fundCount').textContent = state.funds.length;
-  $('#fundList').innerHTML = state.funds.length ? state.funds.map(f=>{
+  const mine = planFunds();
+  $('#fundCount').textContent = mine.length;
+  $('#fundList').innerHTML = mine.length ? mine.map(f=>{
     const a = ASSET[f.assetClass]||ASSET.mixed;
     return `<div class="fund-item">
       <b>${esc(f.name)} ${f.sample?'<span class="tag">ตัวอย่าง</span>':''}${f.sec?'<span class="tag sec">ก.ล.ต.</span>':''}</b>
@@ -632,7 +644,7 @@ function renderFunds(){
         ${f.sec.missing?.length?`<div class="meta" style="color:var(--warn)">ต้องกรอกเอง: ${esc(f.sec.missing.join(', '))}</div>`:''}
         ${f.sec.notes?.length?`<ul class="reasons">${f.sec.notes.map(n=>`<li class="warn">${esc(n)}</li>`).join('')}</ul>`:''}`:''}
       ${portBlock(f)}
-      <div class="row" style="margin-top:8px">${f.sec&&f.sec.link&&f.sec.link.url?`<a class="btn small" href="${esc(f.sec.link.url)}" target="_blank" rel="noopener noreferrer">Fact Sheet ↗</a>`:''}<button class="btn small" data-edit="${esc(f.id)}">แก้ไข</button>${f.sec&&secReady?`<button class="btn small" data-refresh="${esc(f.id)}">อัปเดตจาก ก.ล.ต.</button>`:''}<button class="btn small danger" data-del="${esc(f.id)}">ลบ</button></div>
+      <div class="row" style="margin-top:8px">${f.sec&&f.sec.link&&f.sec.link.url?`<a class="btn small" href="${esc(f.sec.link.url)}" target="_blank" rel="noopener noreferrer">Fact Sheet ↗</a>`:''}<button class="btn small" data-edit="${esc(f.id)}">แก้ไข</button>${f.sec&&secReady?`<button class="btn small" data-refresh="${esc(f.id)}">อัปเดตจาก ก.ล.ต.</button>`:''}<button class="btn small danger" data-del="${esc(f.id)}">เอาออกจากแผน</button></div>
     </div>`; }).join('') : '<p class="muted">ยังไม่มีกองทุน — กรอกฟอร์มด้านบน หรือกด "โหลดกองตัวอย่าง"</p>';
   // a canvas inside a closed <details> has no size, so the donut is drawn the first time it opens
   $('#fundList').querySelectorAll('details.port').forEach(d=>
@@ -771,12 +783,15 @@ async function secFetchFund(projId, cls, source){
 }
 async function addSecFund(b){
   const projId = b.dataset.secadd, cls = b.dataset.seccls;
-  if (state.funds.some(f=>f.sec && f.sec.projId===projId && f.sec.cls===cls) && !confirm('กองนี้มีอยู่แล้ว ต้องการเพิ่มซ้ำหรือไม่?')) return;
+  const dup = state.funds.find(f=>f.sec && f.sec.projId===projId && f.sec.cls===cls);
+  if (dup && activePlan().fundIds.includes(dup.id)) return alert('กองนี้อยู่ในแผนนี้แล้ว');
   b.disabled = true; b.textContent = 'กำลังดึง…';
   try{
     const fund = await secFetchFund(projId, cls, b.dataset.secsrc);
     const rec = sanitizeFund({...DEFAULT_FUND, ...fund, id:uid(), sample:false}); if (!rec) throw new Error('ข้อมูลกองทุนไม่ครบ');
-    state.funds.push(rec); save(); renderFunds();
+    if (dup){ state.funds[state.funds.indexOf(dup)] = sanitizeFund({...dup, ...rec, id:dup.id}) || dup; addToPlan(dup.id); }
+    else { state.funds.push(rec); addToPlan(rec.id); }
+    save(); renderFunds();
     b.textContent = 'เพิ่มแล้ว ✓';
     fillForm(rec); $('#fundForm').scrollIntoView({behavior:'smooth'});
   }catch(err){ b.disabled=false; b.textContent='เพิ่ม'; alert('ดึงข้อมูลไม่สำเร็จ: '+err.message); }
@@ -964,15 +979,41 @@ $('#fundList').addEventListener('click', async e=>{
   }
   const ed = e.target.dataset.edit, del = e.target.dataset.del;
   if (ed){ fillForm(state.funds.find(f=>f.id===ed)); $('#fundForm').scrollIntoView({behavior:'smooth'}); }
-  if (del){ const f=state.funds.find(x=>x.id===del); if (confirm('ลบ "'+f.name+'" ?')){ state.funds=state.funds.filter(x=>x.id!==del); state.plans.forEach(pl=>delete pl.portfolio[del]); state.tx=state.tx.filter(t=>t.fundId!==del); if(editingId===del) fillForm(null); save(); renderFunds(); } }
+  if (del){
+    const f = state.funds.find(x=>x.id===del); if (!f) return;
+    const pl = activePlan();
+    const nTx = state.tx.filter(t=>t.planId===pl.id && t.fundId===del).length;
+    const others = state.plans.filter(x=>x.id!==pl.id && x.fundIds.includes(del)).map(x=>x.name);
+    const msg = `เอา "${f.name.split(' —')[0]}" ออกจากแผน "${pl.name}"?`
+      + (nTx ? `
+รายการซื้อขาย ${nTx} รายการของกองนี้ในแผนนี้จะถูกลบด้วย` : '')
+      + (others.length ? `
+กองนี้ยังอยู่ในแผน ${others.join(', ')} — ไม่ถูกแตะ` : '');
+    if (!confirm(msg)) return;
+    pl.fundIds = pl.fundIds.filter(id=>id!==del);
+    delete pl.portfolio[del];
+    state.tx = state.tx.filter(t=>!(t.planId===pl.id && t.fundId===del));
+    // ไม่มีแผนไหนใช้แล้วและไม่มีรายการซื้อขายค้างอยู่ จึงเอาออกจากคลังได้
+    if (!state.plans.some(x=>x.fundIds.includes(del)) && !state.tx.some(t=>t.fundId===del))
+      state.funds = state.funds.filter(x=>x.id!==del);
+    if (editingId===del) fillForm(null);
+    save(); renderFunds(); }
 });
 $('#btnWipe').addEventListener('click', ()=>{
   if (!confirm('ลบข้อมูลโปรไฟล์ กองทุน และพอร์ตทั้งหมดที่เก็บในเบราว์เซอร์นี้? (ควร Export JSON ไว้ก่อนถ้าต้องการเก็บ)')) return;
   try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'.tab'); localStorage.removeItem(KEY+'.sec'); }catch(e){}
   state = freshState(); location.reload();
 });
-$('#btnSamples').addEventListener('click',()=>{ state.funds = state.funds.filter(f=>!f.sample).concat(SAMPLES.map(s=>({...s,id:uid(),sample:true}))); save(); renderFunds(); });
-$('#btnClearSamples').addEventListener('click', ()=>{ const ids=state.funds.filter(f=>f.sample).map(f=>f.id); ids.forEach(id=>delete state.portfolio[id]); state.funds=state.funds.filter(f=>!f.sample); save(); renderFunds(); });
+$('#btnSamples').addEventListener('click',()=>{
+  const old = state.funds.filter(f=>f.sample).map(f=>f.id);
+  state.plans.forEach(pl=>pl.fundIds = pl.fundIds.filter(id=>!old.includes(id)));
+  const fresh = SAMPLES.map(s=>({...s,id:uid(),sample:true}));
+  state.funds = state.funds.filter(f=>!f.sample).concat(fresh);
+  fresh.forEach(f=>addToPlan(f.id)); save(); renderFunds(); });
+$('#btnClearSamples').addEventListener('click', ()=>{
+  const ids = state.funds.filter(f=>f.sample).map(f=>f.id);
+  state.plans.forEach(pl=>{ pl.fundIds = pl.fundIds.filter(id=>!ids.includes(id)); ids.forEach(id=>delete pl.portfolio[id]); });
+  state.funds = state.funds.filter(f=>!f.sample); save(); renderFunds(); });
 $('#btnExport').addEventListener('click', ()=>{
   const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'fund-screener-data.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
@@ -1008,7 +1049,7 @@ function renderFundPanel(res){
 
 function renderScreen(){
   const p = state.profile;
-  const res = state.funds.map(f=>({f, e:evaluate(f,p)})).sort((a,b)=>(b.e.pass-a.e.pass)||(b.e.total-a.e.total));
+  const res = planFunds().map(f=>({f, e:evaluate(f,p)})).sort((a,b)=>(b.e.pass-a.e.pass)||(b.e.total-a.e.total));
   // เลือกกองให้เสร็จก่อนสร้างตาราง ไม่งั้นแถวแรกจะไม่ถูกไฮไลต์ในรอบแรก
   if (!res.some(r=>r.f.id===selectedFundId)) selectedFundId = res.length ? res[0].f.id : null;
   const passN = res.filter(r=>r.e.pass).length;
@@ -1122,8 +1163,11 @@ function addTx(){
    ทุกบรรทัดคำนวณสดจากข้อมูลที่มี ส่วนที่ยังไม่มีข้อมูลจะบอกว่าขาดอะไร ไม่เดาแทน */
 function renderHome(){
   if (!$('#homeKpis')) return;
-  const p = state.profile;
-  const res = state.funds.map(f=>({f, e:evaluate(f,p)}));
+  // กองเดียวกันอยู่ได้หลายแผน และแต่ละแผนมีเป้าหมายคนละอย่าง จึงต้องคิดคะแนนตามแผนที่มันอยู่
+  const res = [];
+  state.plans.forEach(pl=>planFunds(pl).forEach(f=>res.push({f, pl, e:evaluate(f, pl.profile, pl.weights)})));
+  const uniqueFunds = new Set(res.map(r=>r.f.id)).size;
+  const many = state.plans.length>1;
   const rows = holdingRows(), held = rows;   // หน้าแรกดูรวมทุกแผน
   const totV = held.reduce((t,r)=>t+(r.value||0),0);
   const totC = held.reduce((t,r)=>t+(r.cost||0),0);
@@ -1136,7 +1180,7 @@ function renderHome(){
 
   $('#homeKpis').innerHTML = [
     ['มูลค่าพอร์ต', totV?fmtB(totV):'—', totV&&totC?`${totV>=totC?'+':'−'}${fmtB(Math.abs(totV-totC))} (${pct((totV-totC)/totC*100,2)})`:'กรอกจำนวนหน่วยในหน้าพอร์ต'],
-    ['กองที่ติดตาม', String(state.funds.length), res.filter(r=>!r.e.pass).length?`ไม่ผ่านเกณฑ์ ${res.filter(r=>!r.e.pass).length} กอง`:'ผ่านเกณฑ์ทุกกอง'],
+    ['กองที่ติดตาม', String(uniqueFunds), res.filter(r=>!r.e.pass).length?`ไม่ผ่านเกณฑ์ ${res.filter(r=>!r.e.pass).length} รายการ`:'ผ่านเกณฑ์ทุกกอง'],
     ['คะแนนเฉลี่ย', avg!=null?String(avg):'—', avg!=null?'ตามโปรไฟล์ปัจจุบัน':''],
     ['ปันผลที่จะถึง', upcoming.length?String(upcoming.length):'—', upcoming.length?`รายการถัดไป ${upcoming.at(-1).d}`:'ไม่มีรายการที่ประกาศไว้']
   ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
@@ -1144,7 +1188,7 @@ function renderHome(){
   // ต้องดู: ข้อที่ตกเกณฑ์ก่อน แล้วค่อยคำเตือนระดับ bad แล้วจึงขาดทุนจริง
   const al = [];
   res.forEach(r=>{
-    const nm = r.f.name.split(' —')[0];
+    const nm = (many ? r.pl.name + ' · ' : '') + r.f.name.split(' —')[0];
     r.e.fails.forEach(t=>al.push([0,'warn',`${nm}: ${t}`]));
     CRIT.forEach(c=>r.e.crit[c.k].reasons.filter(x=>x.lvl==='bad').forEach(x=>al.push([1,'warn',`${nm}: ${x.t}`])));
   });
@@ -1155,13 +1199,15 @@ function renderHome(){
   $('#homeAlerts').innerHTML = al.length
     ? al.slice(0,8).map(([,c,t])=>`<div class="callout ${c}">${esc(t)}</div>`).join('')
       + (al.length>8?`<p class="muted" style="margin:8px 0 0">และอีก ${al.length-8} รายการ — ดูทั้งหมดในแท็บผลคัดกรอง</p>`:'')
-    : `<p class="muted" style="margin:0">${state.funds.length?'ไม่มีอะไรต้องดูตอนนี้':'ยังไม่มีกองทุน — เพิ่มในหน้าวางแผนลงทุน'}</p>`;
+    : `<p class="muted" style="margin:0">${res.length?'ไม่มีอะไรต้องดูตอนนี้':'ยังไม่มีกองทุน — เพิ่มในหน้าวางแผนลงทุน'}</p>`;
 
   $('#homeDiv').innerHTML = divs.length
     ? `<ul class="port-list">${divs.slice(0,8).map(x=>`<li><span class="sw" style="background:var(${x.d>=today?'--good':'--d7'})"></span><span class="nm">${esc(x.f.name.split(' —')[0])}${x.d>=today?' · จะจ่าย':''}</span><span class="pv">${x.v} ฿ · ${esc(x.d)}</span></li>`).join('')}</ul>`
     : '<p class="muted" style="margin:0">ยังไม่มีประวัติปันผล — กองที่ถืออาจไม่จ่ายปันผล หรือข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บประวัติ</p>';
 
-  const fresh = res.map(r=>({r, d:(r.f.sec && (r.f.sec.portAsOf || r.f.sec.asOf)) || ''}))
+  const seenF = new Set();
+  const fresh = res.filter(r=>!seenF.has(r.f.id) && seenF.add(r.f.id))
+                   .map(r=>({r, d:(r.f.sec && (r.f.sec.portAsOf || r.f.sec.asOf)) || ''}))
                    .filter(x=>x.d).sort((a,b)=>b.d.localeCompare(a.d));
   $('#homeFresh').innerHTML = fresh.length
     ? `<thead><tr><th>กองทุน</th><th>ข้อมูล ณ</th><th class="num">คะแนน</th><th></th></tr></thead><tbody>${
@@ -1290,7 +1336,7 @@ function renderPlan(){
   document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('active', b.dataset.mode===p.mode));
   $('#showReal').checked = !!state.showReal;
   // make sure portfolio only has passing funds
-  state.funds.forEach(f=>{ if (f.id in state.portfolio && !evaluate(f,p).pass) delete state.portfolio[f.id]; });
+  planFunds().forEach(f=>{ if (f.id in state.portfolio && !evaluate(f,p).pass) delete state.portfolio[f.id]; });
   const legs = portfolioLegs();
   $('#planEmpty').style.display = legs.length ? 'none' : 'block';
   $('#planBody').style.display = legs.length ? 'block' : 'none';
