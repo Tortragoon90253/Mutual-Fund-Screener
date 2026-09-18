@@ -728,13 +728,36 @@ async function secInit(){
     status.textContent = noKeyMsg || 'ยังไม่มีข้อมูลจาก ก.ล.ต. — กรอกข้อมูลเองได้ตามปกติ';
   }
 }
+/* กองเดียวกันโผล่ได้หลายแท็บแนะนำและในผลค้นหาด้วย ปุ่มจึงต้องบอกสถานะจริง
+   ไม่ใช่จำแค่ปุ่มที่เพิ่งกด — และบอกด้วยว่าอยู่ในแผนอื่นไหม เพราะเลือกกองซ้ำข้ามแผนได้ */
+function addedIn(projId, cls){
+  const f = state.funds.find(x=>x.sec && x.sec.projId===projId && x.sec.cls===cls);
+  if (!f) return {here:false, others:[]};
+  const pl = activePlan();
+  return {here: pl.fundIds.includes(f.id),
+          others: state.plans.filter(x=>x.id!==pl.id && x.fundIds.includes(f.id)).map(x=>x.name)};
+}
+function addBtn(projId, cls, src){
+  const st = addedIn(projId, cls);
+  const attr = `data-secadd="${esc(projId)}" data-seccls="${esc(cls)}"${src?` data-secsrc="${esc(src)}"`:''}`;
+  if (st.here) return `<button class="btn small" type="button" ${attr} disabled>อยู่ในแผนนี้แล้ว ✓</button>`;
+  return `<button class="btn small primary" type="button" ${attr}>เพิ่ม</button>`
+    + (st.others.length ? `<div class="muted" style="font-size:.74rem;margin-top:3px;text-align:right">อยู่ในแผน ${esc(st.others.join(', '))}</div>` : '');
+}
+function refreshAddButtons(){
+  document.querySelectorAll('[data-secadd]').forEach(b=>{
+    const holder = document.createElement('span');
+    holder.innerHTML = addBtn(b.dataset.secadd, b.dataset.seccls, b.dataset.secsrc);
+    b.replaceWith(...holder.childNodes);
+  });
+}
 function renderSecResults(items, total){
   const more = total > items.length ? ` — แสดง ${items.length} รายการแรก พิมพ์ให้เจาะจงขึ้นเพื่อดูเพิ่ม` : '';
   $('#secResults').innerHTML = items.length ? `<p class="muted" style="margin:0 0 4px">พบ ${total.toLocaleString('th-TH')} รายการ${more}</p>` + items.map(it=>`<div class="sec-row">
       <div><b>${esc(it.abbr)}${it.cls&&it.cls!=='main'?' · '+esc(it.cls):''}</b> ${NON_RETAIL[it.retail]?`<span class="tag">${NON_RETAIL[it.retail]}</span>`:''}${it.aud==='inst'?'<span class="tag" title="ขายเฉพาะกองทุนสำรองเลี้ยงชีพ/กองทุนส่วนบุคคล/ประกันควบการลงทุน/สถาบัน">เฉพาะกลุ่ม</span>':''}
         <div class="meta">${esc(it.nameTh||it.nameEn)}</div>
         <div class="meta">${esc(it.amc)}${it.policy?' · '+esc(it.policy):''}${it.tag?' · '+esc(it.tag):''}</div></div>
-      <button class="btn small primary" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}">เพิ่ม</button></div>`).join('')
+      <div>${addBtn(it.projId, it.cls)}</div></div>`).join('')
     : '<p class="muted">ไม่พบกองทุน — ลองใช้ชื่อย่อหรือคำอื่น</p>';
 }
 function searchStatic(q){
@@ -792,7 +815,7 @@ async function addSecFund(b){
     if (dup){ state.funds[state.funds.indexOf(dup)] = sanitizeFund({...dup, ...rec, id:dup.id}) || dup; addToPlan(dup.id); }
     else { state.funds.push(rec); addToPlan(rec.id); }
     save(); renderFunds();
-    b.textContent = 'เพิ่มแล้ว ✓';
+    refreshAddButtons();          // กองเดียวกันอาจอยู่ในแท็บอื่นและในผลค้นหาพร้อมกัน
     fillForm(rec); $('#fundForm').scrollIntoView({behavior:'smooth'});
   }catch(err){ b.disabled=false; b.textContent='เพิ่ม'; alert('ดึงข้อมูลไม่สำเร็จ: '+err.message); }
 }
@@ -936,7 +959,7 @@ function recoRow(r, rank, isLabel){
     <div class="reco-side">
       <span class="grade ${cls(e.total)}" title="คะแนนรวม ${e.total}">${esc(e.grade)}</span>
       <span class="muted" style="font-size:.8rem">${e.total} คะแนน</span>
-      <button class="btn small primary" type="button" data-secadd="${esc(it.projId)}" data-seccls="${esc(it.cls)}" data-secsrc="static">เพิ่ม</button>
+      ${addBtn(it.projId, it.cls, 'static')}
     </div>
   </div>`;
 }
@@ -1115,7 +1138,7 @@ function fillPlanSelects(){
 function switchPlan(id){
   if (!state.plans.some(pl=>pl.id===id)) return;
   state.activePlan = id; save();
-  syncProfileInputs(); fillPlanSelects(); renderFunds();
+  syncProfileInputs(); fillPlanSelects(); renderFunds(); refreshAddButtons();
   if ($('#panel-screen').classList.contains('active')) renderScreen();
   if ($('#panel-plan').classList.contains('active')) renderPlan();
 }
