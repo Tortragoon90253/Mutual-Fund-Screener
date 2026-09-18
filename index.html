@@ -45,6 +45,37 @@ header a{color:var(--accent)}
 .tabs button{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--muted);padding:6px 13px;border-radius:7px;font:inherit;font-size:.87rem;font-weight:500;cursor:pointer}
 .tabs button.active{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
 .panel{display:none}.panel.active{display:block}
+/* หน้าวางแผน: โปรไฟล์ค้างซ้าย + รายละเอียดกองขวา */
+.plan-layout{display:grid;grid-template-columns:236px minmax(0,1fr);gap:20px;align-items:start}
+.side{position:sticky;top:68px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.side-group+.side-group{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.side-group h3{margin:0 0 10px;font-size:.72rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.side label.f{margin-bottom:10px;font-size:.82rem}
+.side label.f:last-child{margin-bottom:0}
+.side input,.side select{padding:6px 8px;font-size:.85rem}
+.side-note{margin:14px 0 0;font-size:.76rem;color:var(--muted);line-height:1.5}
+.plan-main{min-width:0}
+.screen-layout{display:grid;grid-template-columns:minmax(0,1fr) 316px;gap:16px;align-items:start}
+.screen-main{min-width:0}
+.screen-side{position:sticky;top:68px}
+#fundPanel{margin-bottom:0}
+.fp-head{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
+.fp-head b{font-size:.92rem;line-height:1.4;min-width:0}
+.fp-score{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.fp-score .n{font-family:var(--mono);font-size:1.25rem;font-weight:600}
+.fp-donut{width:150px;height:150px;margin:0 auto 12px}
+.fp-crit{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.79rem}
+.fp-crit .nm{flex:1 1 auto;min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-crit .bar{flex:0 0 66px;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+.fp-crit .bar i{display:block;height:5px}
+.fp-crit .pv{flex:0 0 22px;text-align:right;font-family:var(--mono);font-size:.76rem}
+.fp-sec{margin:14px 0 6px;font-size:.72rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.linklike{font:inherit;background:none;border:0;padding:0;color:var(--text);cursor:pointer;text-align:left}
+.linklike:hover{color:var(--accent)}
+tr.sel{background:var(--accent-soft)}
+tr.sel .linklike{color:var(--accent);font-weight:600}
+@media (max-width:1100px){.screen-layout{grid-template-columns:minmax(0,1fr)}.screen-side{position:static}.fp-donut{margin-left:0}}
+@media (max-width:860px){.plan-layout{grid-template-columns:minmax(0,1fr)}.side{position:static}}
 .soon{max-width:640px}
 .soon h2{font-size:1.15rem;margin:0 0 6px}
 .soon ul{margin:10px 0 0;padding-left:20px;color:var(--muted);font-size:.9rem;line-height:1.8}
@@ -196,24 +227,10 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 
 <!-- PLAN -->
 <div class="section active" id="section-plan">
-<header style="margin:0 0 14px">
-  <h1>คัดกรองกองทุน & วางแผนการลงทุน</h1>
-  <p>เกณฑ์ 8 ข้อก่อนเลือกซื้อกองทุน/ETF อ้างอิงจากคลิป <a href="https://youtu.be/YGXO27A9Ih4" target="_blank" rel="noopener">Money Matters EP.337</a></p>
-</header>
-
-<nav class="tabs" role="tablist">
-  <button data-tab="profile" class="active">① โปรไฟล์ & เป้าหมาย</button>
-  <button data-tab="funds">② ข้อมูลกองทุน</button>
-  <button data-tab="screen">③ ผลคัดกรอง & จัดพอร์ต</button>
-  <button data-tab="plan">④ วางแผน & คาดการณ์</button>
-</nav>
-
-<!-- PROFILE -->
-<section class="panel active" id="panel-profile">
-  <div class="card">
-    <h2>เริ่มจากเป้าหมาย</h2>
-    <p class="sub">เกณฑ์ข้อแรกในคลิป: รู้ก่อนว่าลงทุนเพื่ออะไร นานแค่ไหน และรับความเสี่ยงได้เท่าไร — ค่าเหล่านี้ใช้คัดกรองทุกกอง</p>
-    <div class="grid">
+<div class="plan-layout">
+<aside class="side">
+  <div class="side-group">
+    <h3>โปรไฟล์ของคุณ</h3>
       <label class="f">เป้าหมายการลงทุน
         <select data-p="goal">
           <option value="wealth">สะสมความมั่งคั่งระยะยาว</option>
@@ -239,19 +256,28 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
         </select>
         <span class="hint">อ้างอิงระดับความเสี่ยงของ ก.ล.ต. ใน Fund Fact Sheet</span>
       </label>
-    </div>
   </div>
-  <div class="card">
-    <h2>เงินลงทุน</h2>
-    <p class="sub">รูปแบบการลงทุนเลือกได้ในแท็บ ④ — ก้อนเดียวใช้ "เงินก้อน", DCA ใช้ "เงินรายเดือน", แบบผสมใช้ทั้งสอง</p>
-    <div class="grid">
+  <div class="side-group">
+    <h3>เงินลงทุน</h3>
       <label class="f">เงินก้อน (บาท)<input type="number" min="0" step="1000" data-p="lump"></label>
       <label class="f">เงิน DCA ต่อเดือน (บาท)<input type="number" min="0" step="500" data-p="monthly"></label>
       <label class="f">เงินเฟ้อคาดการณ์ (% ต่อปี)<input type="number" min="0" max="15" step="0.1" data-p="inflation"></label>
-    </div>
   </div>
-</section>
+  <p class="side-note">ค่าเหล่านี้ใช้คัดกรองทุกกอง — แก้แล้วผลคัดกรองอัปเดตทันที</p>
+</aside>
+<div class="plan-main">
+<header style="margin:0 0 14px">
+  <h1>คัดกรองกองทุน & วางแผนการลงทุน</h1>
+  <p>เกณฑ์ 8 ข้อก่อนเลือกซื้อกองทุน/ETF อ้างอิงจากคลิป <a href="https://youtu.be/YGXO27A9Ih4" target="_blank" rel="noopener">Money Matters EP.337</a></p>
+</header>
 
+<nav class="tabs" role="tablist">
+  <button data-tab="funds" class="active">① ข้อมูลกองทุน</button>
+  <button data-tab="screen">② ผลคัดกรอง & จัดพอร์ต</button>
+  <button data-tab="plan">③ วางแผน & คาดการณ์</button>
+</nav>
+
+<!-- PROFILE -->
 <!-- FUNDS -->
 <section class="panel" id="panel-funds">
   <div class="card" id="secCard">
@@ -287,26 +313,26 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 
 <!-- SCREEN -->
 <section class="panel" id="panel-screen">
-  <div class="card">
-    <h2>ผลคัดกรองตามเกณฑ์ 8 ข้อ</h2>
-    <p class="sub" id="screenSub"></p>
-    <div class="scroll"><table id="screenTable"></table></div>
-    <details style="margin-top:12px">
-      <summary class="muted" style="cursor:pointer">ปรับน้ำหนักคะแนนแต่ละเกณฑ์</summary>
-      <div class="grid" id="weightInputs" style="margin-top:10px"></div>
-    </details>
+ <div class="screen-layout">
+  <div class="screen-main">
+    <div class="card">
+      <h2>ผลคัดกรองตามเกณฑ์ 8 ข้อ</h2>
+      <p class="sub" id="screenSub"></p>
+      <div class="scroll"><table id="screenTable"></table></div>
+      <details style="margin-top:12px">
+        <summary class="muted" style="cursor:pointer">ปรับน้ำหนักคะแนนแต่ละเกณฑ์</summary>
+        <div class="grid" id="weightInputs" style="margin-top:10px"></div>
+      </details>
+    </div>
+    <div class="card">
+      <h2>จัดพอร์ต</h2>
+      <p class="sub">เลือกกองที่ผ่านการคัดกรองและกำหนดสัดส่วน (โปรแกรมจะปรับให้รวมเป็น 100% อัตโนมัติ)</p>
+      <div class="scroll"><table id="pfTable"></table></div>
+      <p class="muted" id="pfSum" style="margin:8px 0 0"></p>
+    </div>
   </div>
-  <div class="card">
-    <h2>เหตุผลรายกอง</h2>
-    <p class="sub">กดเพื่อดูว่าแต่ละกองผ่าน/ติดเกณฑ์ข้อไหน</p>
-    <div id="screenDetails"></div>
-  </div>
-  <div class="card">
-    <h2>จัดพอร์ต</h2>
-    <p class="sub">เลือกกองที่ผ่านการคัดกรองและกำหนดสัดส่วน (โปรแกรมจะปรับให้รวมเป็น 100% อัตโนมัติ)</p>
-    <div class="scroll"><table id="pfTable"></table></div>
-    <p class="muted" id="pfSum" style="margin:8px 0 0"></p>
-  </div>
+  <aside class="screen-side"><div class="card" id="fundPanel"></div></aside>
+ </div>
 </section>
 
 <!-- PLAN -->
@@ -358,6 +384,8 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     </div>
   </div>
 </section>
+</div><!-- /.plan-main -->
+</div><!-- /.plan-layout -->
 </div><!-- /section-plan -->
 
 <footer>

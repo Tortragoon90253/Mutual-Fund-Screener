@@ -416,6 +416,12 @@ function showTab(t){
 document.querySelectorAll('[data-p]').forEach(el=>{
   el.value = state.profile[el.dataset.p];
   el.addEventListener('input',()=>{ state.profile[el.dataset.p]=el.value; save(); });
+  // โปรไฟล์อยู่ค้างข้างซ้ายแล้ว แก้ปุ๊บผลต้องเปลี่ยนปั๊บ — ใช้ change ไม่ใช่ input
+  // เพราะช่องตัวเลขจะยิง input ทุกการกดแป้น แล้ววาดกราฟใหม่ทุกครั้ง
+  el.addEventListener('change',()=>{
+    if ($('#panel-screen').classList.contains('active')) renderScreen();
+    if ($('#panel-plan').classList.contains('active')) renderPlan();
+  });
 });
 
 /* ============ UI: fund form ============ */
@@ -505,11 +511,13 @@ function portBlock(f){
 }
 function drawPort(id){
   const f = state.funds.find(x=>x.id===id);
-  const rows = f && f.sec && f.sec.alloc;
-  if (!rows || !rows.length || !document.getElementById('port_'+id)) return;
+  drawDonut('port_'+id, f && f.sec && f.sec.alloc);
+}
+function drawDonut(canvasId, rows){
+  if (!rows || !rows.length || !document.getElementById(canvasId)) return;
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
   Chart.defaults.color = css('--muted');
-  draw('port_'+id, {
+  draw(canvasId, {
     type:'doughnut',
     data:{labels: rows.map(x=>x[0]), datasets:[{
       data: rows.map(x=>x[1]),
@@ -884,20 +892,48 @@ $('#fileImport').addEventListener('change', e=>{
 });
 
 /* ============ UI: screening ============ */
+let selectedFundId = null;
+function renderFundPanel(res){
+  const box = $('#fundPanel'); if (!box) return;
+  const r = res.find(x=>x.f.id===selectedFundId) || res[0];
+  if (!r){ box.innerHTML = '<p class="muted" style="margin:0">ยังไม่มีกองทุน — เพิ่มในแท็บ ①</p>'; return; }
+  selectedFundId = r.f.id;
+  const e = r.e, alloc = (r.f.sec && r.f.sec.alloc) || [];
+  const barInk = s => s>=75 ? 'var(--good)' : s>=50 ? 'var(--warn)' : 'var(--bad)';
+  box.innerHTML = `<div class="fp-head">
+      <b>${esc(r.f.name)}</b>
+      <span class="fp-score"><span class="grade ${e.pass?cls(e.total):'s-bad'}">${e.grade}</span><span class="n">${e.total}</span></span>
+    </div>
+    ${e.pass ? '' : `<p class="callout warn" style="margin:0 0 12px;font-size:.82rem">ไม่ผ่านเกณฑ์: ${esc(e.fails.join(' · '))}</p>`}
+    ${alloc.length ? '<div class="fp-donut"><canvas id="panelDonut"></canvas></div>' : ''}
+    ${CRIT.map((c,i)=>{ const v = e.crit[c.k].score;
+      return `<div class="fp-crit"><span class="nm">${i+1}. ${esc(c.name)}</span><span class="bar"><i style="width:${v}%;background:${barInk(v)}"></i></span><span class="pv">${v}</span></div>`;
+    }).join('')}
+    <div class="fp-sec">เหตุผล</div>
+    <ul class="reasons">${CRIT.map((c,i)=>e.crit[c.k].reasons.map(x=>`<li class="${x.lvl}"><span class="crit">${i+1}. ${esc(c.name)}:</span> ${esc(x.t)}</li>`).join('')).join('')}</ul>`;
+  if (alloc.length) drawDonut('panelDonut', alloc);
+}
+
 function renderScreen(){
   const p = state.profile;
   const res = state.funds.map(f=>({f, e:evaluate(f,p)})).sort((a,b)=>(b.e.pass-a.e.pass)||(b.e.total-a.e.total));
+  // เลือกกองให้เสร็จก่อนสร้างตาราง ไม่งั้นแถวแรกจะไม่ถูกไฮไลต์ในรอบแรก
+  if (!res.some(r=>r.f.id===selectedFundId)) selectedFundId = res.length ? res[0].f.id : null;
   const passN = res.filter(r=>r.e.pass).length;
   $('#screenSub').textContent = `ผ่านเกณฑ์ ${passN} จาก ${res.length} กอง · โปรไฟล์: ${$('[data-p=goal]').selectedOptions[0].text}, ${p.years} ปี, รับความเสี่ยงได้ระดับ ${p.riskTol}`;
   $('#screenTable').innerHTML = `<thead><tr><th>#</th><th>กองทุน</th><th>เกรด</th><th class="num">คะแนน</th>${CRIT.map((c,i)=>`<th title="${c.name}">${i+1}. ${c.name}</th>`).join('')}<th>สถานะ</th></tr></thead><tbody>${
-    res.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.f.name)}</td>
+    res.map((r,i)=>`<tr class="${r.f.id===selectedFundId?'sel':''}"><td>${i+1}</td><td><button type="button" class="linklike" data-sel="${esc(r.f.id)}">${esc(r.f.name)}</button></td>
       <td><span class="grade ${r.e.pass?cls(r.e.total):'s-bad'}">${r.e.grade}</span></td>
       <td class="num"><b>${r.e.total}</b></td>
       ${CRIT.map(c=>`<td><span class="cell ${cls(r.e.crit[c.k].score)}">${r.e.crit[c.k].score}</span></td>`).join('')}
       <td>${r.e.pass?'<span class="cell s-good">ผ่าน</span>':`<span class="cell s-bad" title="${esc(r.e.fails.join(', '))}">ไม่ผ่าน</span>`}</td></tr>`).join('')
   }</tbody>`;
-  $('#screenDetails').innerHTML = res.map(r=>`<details class="fund-detail"><summary>${esc(r.f.name)} — เกรด ${r.e.grade} (${r.e.total})${r.e.pass?'':' · ไม่ผ่าน: '+esc(r.e.fails.join(', '))}</summary>
-    <ul class="reasons">${CRIT.map((c,i)=>r.e.crit[c.k].reasons.map(x=>`<li class="${x.lvl}"><span class="crit">${i+1}. ${c.name}:</span> ${esc(x.t)}</li>`).join('')).join('')}</ul></details>`).join('') || '<p class="muted">ยังไม่มีกองทุน</p>';
+  document.querySelectorAll('[data-sel]').forEach(b=>b.addEventListener('click',()=>{
+    selectedFundId = b.dataset.sel;
+    document.querySelectorAll('#screenTable tr').forEach(tr=>tr.classList.toggle('sel', !!tr.querySelector(`[data-sel="${CSS.escape(selectedFundId)}"]`)));
+    renderFundPanel(res);
+  }));
+  renderFundPanel(res);
 
   $('#weightInputs').innerHTML = CRIT.map((c,i)=>`<label class="f">${i+1}. ${c.name}<input type="number" min="0" max="100" step="1" data-w="${c.k}" value="${esc(num(state.weights[c.k]))}"></label>`).join('');
   document.querySelectorAll('[data-w]').forEach(el=>el.addEventListener('change',()=>{ state.weights[el.dataset.w]=num(el.value); save(); renderScreen(); }));
