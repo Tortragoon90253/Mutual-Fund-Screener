@@ -128,14 +128,27 @@ const SAMPLES = [
 
 /* ============ state ============ */
 const KEY = 'fundScreener.v1';
-let state = load() || freshState();
-function freshState(){
-  return {
+let state = load() || bindPlan(freshState());
+/* แผนการลงทุน: เป้าหมายคนละอย่างต้องใช้โปรไฟล์คนละชุด (เกษียณ 20 ปี กับ ดาวน์บ้าน 3 ปี
+   รับความเสี่ยงได้ไม่เท่ากัน) · คลัง funds ใช้ร่วมกันทุกแผน เพราะข้อมูลกองเป็นข้อเท็จจริงของกอง
+   ไม่ขึ้นกับว่าใครวางแผนอะไร · เก็บซ้ำในแต่ละแผนแล้วจะอัปเดตไม่ตรงกัน */
+function freshPlan(name){
+  return {id:uid(), name: name || 'แผนหลัก',
     profile:{goal:'wealth', years:10, riskTol:'6', lump:100000, monthly:5000, inflation:2, mode:'mix'},
-    funds: SAMPLES.map(s=>({...s, id:uid(), sample:true})),
-    weights: Object.fromEntries(CRIT.map(c=>[c.k,c.w])),
-    portfolio:{}, holdings:{}, showReal:false
-  };
+    weights: Object.fromEntries(CRIT.map(c=>[c.k,c.w])), portfolio:{}};
+}
+function freshState(){
+  const pl = freshPlan();
+  return {funds: SAMPLES.map(s=>({...s, id:uid(), sample:true})),
+          plans:[pl], activePlan: pl.id, tx: [], showReal:false};
+}
+const activePlan = () => state.plans.find(x=>x.id===state.activePlan) || state.plans[0];
+// อ่าน state.profile / .weights / .portfolio ให้ชี้ไปที่แผนที่เลือกอยู่ โค้ดเดิมจึงไม่ต้องแก้ทุกจุด
+// ตั้ง enumerable:false เพื่อไม่ให้ JSON.stringify เก็บซ้ำกับที่อยู่ใน plans อยู่แล้ว
+function bindPlan(target){
+  ['profile','weights','portfolio'].forEach(k=>
+    Object.defineProperty(target, k, {get:()=>activePlan()[k], configurable:true, enumerable:false}));
+  return target;
 }
 function load(){ try{ return sanitizeState(JSON.parse(localStorage.getItem(KEY))); }catch(e){ return null; } }
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
@@ -147,7 +160,9 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 function cleanNum(v, min=-1e12, max=1e12){ const n = parseFloat(v); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : ''; }
 function cleanStr(v, max=300){ return (typeof v==='string' || typeof v==='number') ? String(v).slice(0, max) : ''; }
 function cleanEnum(v, allowed, dflt){ return allowed.includes(String(v)) ? String(v) : dflt; }
-function cleanId(v){ return /^[a-z0-9]{4,16}$/.test(v) ? v : uid(); }
+// .test() แปลงค่าเป็นสตริงก่อน ทำให้ undefined กลายเป็น "undefined" ซึ่งตรงรูปแบบพอดี
+// แล้วคืนค่า undefined กลับไปเป็น id — ต้องเช็คชนิดก่อน
+function cleanId(v){ return typeof v==='string' && /^[a-z0-9]{4,16}$/.test(v) ? v : uid(); }
 function sanitizeFund(f){
   if (!f || typeof f!=='object') return null;
   const out = {};
@@ -204,35 +219,59 @@ function sanitizeFund(f){
   }
   return out;
 }
+function sanitizePlan(raw, fundIds){
+  const r = raw && typeof raw==='object' ? raw : {};
+  const p = r.profile || {}, d = freshPlan().profile, weights = {}, portfolio = {};
+  CRIT.forEach(c=>{ const w = cleanNum(r.weights?.[c.k],0,100); weights[c.k] = w==='' ? c.w : w; });
+  if (r.portfolio && typeof r.portfolio==='object') Object.entries(r.portfolio).forEach(([k,v])=>{
+    if (fundIds.has(k)) portfolio[k] = cleanNum(v,0,100000) || 0; });
+  return {
+    id: cleanId(r.id), name: cleanStr(r.name,40) || 'แผนหลัก',
+    profile:{
+      goal: cleanEnum(p.goal, ['wealth','retire','income','tax','short'], d.goal),
+      years: cleanNum(p.years,1,50) || d.years,
+      riskTol: cleanEnum(p.riskTol, ['1','2','3','4','5','6','7','8'], d.riskTol),
+      lump: cleanNum(p.lump,0,1e12) === '' ? d.lump : cleanNum(p.lump,0,1e12),
+      monthly: cleanNum(p.monthly,0,1e10) === '' ? d.monthly : cleanNum(p.monthly,0,1e10),
+      inflation: cleanNum(p.inflation,0,50) === '' ? d.inflation : cleanNum(p.inflation,0,50),
+      mode: cleanEnum(p.mode, ['lump','dca','mix'], d.mode)
+    }, weights, portfolio };
+}
+function sanitizeTx(t, fundIds, planIds){
+  if (!t || typeof t!=='object') return null;
+  const fundId = cleanStr(t.fundId,16), planId = cleanStr(t.planId,16);
+  if (!fundIds.has(fundId) || !planIds.has(planId)) return null;
+  const units = cleanNum(t.units,0,1e12);
+  if (units==='' || units<=0) return null;
+  const amount = cleanNum(t.amount,0,1e12);
+  return {id: cleanId(t.id), planId, fundId, kind: t.kind==='sell' ? 'sell' : 'buy',
+          date: /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : '',
+          units, amount: amount==='' ? 0 : amount};
+}
 function sanitizeState(s){
   if (!s || typeof s!=='object' || !Array.isArray(s.funds)) return null;
-  const base = freshState(), p = s.profile || {};
   const funds = s.funds.slice(0,500).map(sanitizeFund).filter(Boolean);
-  const seen = new Set(); funds.forEach(f=>{ while (seen.has(f.id)) f.id = uid(); seen.add(f.id); });
-  const portfolio = {};
-  if (s.portfolio && typeof s.portfolio==='object') Object.entries(s.portfolio).forEach(([k,v])=>{ if (seen.has(k)) portfolio[k] = cleanNum(v,0,100000) || 0; });
-  // holdings = สิ่งที่ถืออยู่จริง {fundId:{u:จำนวนหน่วย, c:ต้นทุนต่อหน่วย}}
-  // portfolio = สัดส่วน % ที่วางแผนไว้ — คนละเรื่องกัน อย่ารวมกัน
-  const holdings = {};
-  if (s.holdings && typeof s.holdings==='object') Object.entries(s.holdings).forEach(([k,v])=>{
-    if (!seen.has(k) || !v || typeof v!=='object') return;
-    const u = cleanNum(v.u,0,1e12), c = cleanNum(v.c,0,1e9);
-    if (u!=='' && u>0) holdings[k] = {u, c: c===''?0:c};
-  });
-  const weights = {};
-  CRIT.forEach(c=>{ const w = cleanNum(s.weights?.[c.k],0,100); weights[c.k] = w==='' ? c.w : w; });
-  return {
-    profile:{
-      goal: cleanEnum(p.goal, ['wealth','retire','income','tax','short'], base.profile.goal),
-      years: cleanNum(p.years,1,50) || base.profile.years,
-      riskTol: cleanEnum(p.riskTol, ['1','2','3','4','5','6','7','8'], base.profile.riskTol),
-      lump: cleanNum(p.lump,0,1e12) === '' ? base.profile.lump : cleanNum(p.lump,0,1e12),
-      monthly: cleanNum(p.monthly,0,1e10) === '' ? base.profile.monthly : cleanNum(p.monthly,0,1e10),
-      inflation: cleanNum(p.inflation,0,50) === '' ? base.profile.inflation : cleanNum(p.inflation,0,50),
-      mode: cleanEnum(p.mode, ['lump','dca','mix'], base.profile.mode)
-    },
-    funds, weights, portfolio, holdings, showReal: s.showReal===true
-  };
+  const fundIds = new Set(); funds.forEach(f=>{ while (fundIds.has(f.id)) f.id = uid(); fundIds.add(f.id); });
+
+  // รูปแบบใหม่มี plans · รูปแบบเดิมมีโปรไฟล์ชุดเดียวที่ระดับบนสุด ให้ยกมาเป็นแผนแรก
+  let plans = Array.isArray(s.plans) && s.plans.length
+    ? s.plans.slice(0,20).map(pl=>sanitizePlan(pl, fundIds))
+    : [sanitizePlan({name:'แผนหลัก', profile:s.profile, weights:s.weights, portfolio:s.portfolio}, fundIds)];
+  const planIds = new Set(); plans.forEach(pl=>{ while (planIds.has(pl.id)) pl.id = uid(); planIds.add(pl.id); });
+  const active = cleanStr(s.activePlan,16);
+
+  let tx = Array.isArray(s.tx) ? s.tx.slice(0,5000).map(t=>sanitizeTx(t, fundIds, planIds)).filter(Boolean) : [];
+  // holdings เดิมเก็บต้นทุนเฉลี่ยตัวเดียว แปลงเป็นรายการซื้อหนึ่งรายการโดยไม่ระบุวันที่ (ยอดยกมา)
+  if (!tx.length && s.holdings && typeof s.holdings==='object')
+    Object.entries(s.holdings).forEach(([fid,h])=>{
+      if (!fundIds.has(fid) || !h || typeof h!=='object') return;
+      const u = cleanNum(h.u,0,1e12), c = cleanNum(h.c,0,1e9);
+      if (u!=='' && u>0) tx.push({id:uid(), planId:plans[0].id, fundId:fid, kind:'buy', date:'',
+                                  units:u, amount: c==='' ? 0 : u*c});
+    });
+
+  return bindPlan({funds, plans, activePlan: planIds.has(active) ? active : plans[0].id,
+                   tx, showReal: s.showReal===true});
 }
 
 /* ============ helpers ============ */
@@ -920,7 +959,7 @@ $('#fundList').addEventListener('click', async e=>{
   }
   const ed = e.target.dataset.edit, del = e.target.dataset.del;
   if (ed){ fillForm(state.funds.find(f=>f.id===ed)); $('#fundForm').scrollIntoView({behavior:'smooth'}); }
-  if (del){ const f=state.funds.find(x=>x.id===del); if (confirm('ลบ "'+f.name+'" ?')){ state.funds=state.funds.filter(x=>x.id!==del); delete state.portfolio[del]; delete state.holdings[del]; if(editingId===del) fillForm(null); save(); renderFunds(); } }
+  if (del){ const f=state.funds.find(x=>x.id===del); if (confirm('ลบ "'+f.name+'" ?')){ state.funds=state.funds.filter(x=>x.id!==del); state.plans.forEach(pl=>delete pl.portfolio[del]); state.tx=state.tx.filter(t=>t.fundId!==del); if(editingId===del) fillForm(null); save(); renderFunds(); } }
 });
 $('#btnWipe').addEventListener('click', ()=>{
   if (!confirm('ลบข้อมูลโปรไฟล์ กองทุน และพอร์ตทั้งหมดที่เก็บในเบราว์เซอร์นี้? (ควร Export JSON ไว้ก่อนถ้าต้องการเก็บ)')) return;
@@ -1007,6 +1046,72 @@ function renderScreen(){
   save();
 }
 
+/* ============ UI: แผนการลงทุน ============ */
+let pfScopeId = '';                       // '' = พอร์ตรวมทุกแผน
+function syncProfileInputs(){
+  document.querySelectorAll('[data-p]').forEach(el=>{ el.value = state.profile[el.dataset.p]; });
+  const nm = $('#planName'); if (nm) nm.value = activePlan().name;
+}
+function fillPlanSelects(){
+  const opts = state.plans.map(pl=>`<option value="${esc(pl.id)}">${esc(pl.name)}</option>`).join('');
+  const pick = $('#planPick'); if (pick){ pick.innerHTML = opts; pick.value = state.activePlan; }
+  const txp = $('#txPlan');   if (txp){ txp.innerHTML = opts; txp.value = state.activePlan; }
+  const sc = $('#pfScope');
+  if (sc){ sc.innerHTML = `<option value="">ทุกแผนรวมกัน</option>` + opts;
+           sc.value = state.plans.some(pl=>pl.id===pfScopeId) ? pfScopeId : (pfScopeId = ''); }
+  const tf = $('#txFund');
+  if (tf){ const cur = tf.value;
+    tf.innerHTML = state.funds.map(f=>`<option value="${esc(f.id)}">${esc(f.name.split(' —')[0])}</option>`).join('')
+      || '<option value="">— ยังไม่มีกองทุน —</option>';
+    if (state.funds.some(f=>f.id===cur)) tf.value = cur; }
+  const del = $('#planDel'); if (del) del.disabled = state.plans.length<2;
+}
+function switchPlan(id){
+  if (!state.plans.some(pl=>pl.id===id)) return;
+  state.activePlan = id; save();
+  syncProfileInputs(); fillPlanSelects(); renderFunds();
+  if ($('#panel-screen').classList.contains('active')) renderScreen();
+  if ($('#panel-plan').classList.contains('active')) renderPlan();
+}
+function planUI(){
+  if (!$('#planPick')) return;
+  $('#planPick').addEventListener('change', e=>switchPlan(e.target.value));
+  $('#planName').addEventListener('input', e=>{
+    activePlan().name = cleanStr(e.target.value,40) || 'แผนไม่มีชื่อ'; save(); fillPlanSelects(); });
+  $('#planNew').addEventListener('click', ()=>{
+    const pl = freshPlan('แผนที่ ' + (state.plans.length+1));
+    state.plans.push(pl); switchPlan(pl.id); });
+  $('#planCopy').addEventListener('click', ()=>{
+    const cur = activePlan();
+    const pl = {...JSON.parse(JSON.stringify(cur)), id: uid(), name: cur.name + ' (สำเนา)'};
+    state.plans.push(pl); switchPlan(pl.id); });
+  $('#planDel').addEventListener('click', ()=>{
+    if (state.plans.length<2) return;
+    const cur = activePlan(), n = state.tx.filter(t=>t.planId===cur.id).length;
+    if (!confirm(`ลบแผน "${cur.name}"?` + (n?`
+รายการซื้อขาย ${n} รายการในแผนนี้จะถูกลบด้วย`:''))) return;
+    state.tx = state.tx.filter(t=>t.planId!==cur.id);
+    state.plans = state.plans.filter(pl=>pl.id!==cur.id);
+    switchPlan(state.plans[0].id); });
+  $('#pfScope') && $('#pfScope').addEventListener('change', e=>{ pfScopeId = e.target.value; renderHoldings(); });
+  $('#txAdd') && $('#txAdd').addEventListener('click', addTx);
+  fillPlanSelects(); syncProfileInputs();
+}
+function addTx(){
+  const fundId = $('#txFund').value, planId = $('#txPlan').value;
+  const units = cleanNum($('#txUnits').value,0,1e12), amount = cleanNum($('#txAmount').value,0,1e12);
+  const hint = $('#txHint');
+  if (!fundId || !state.plans.some(pl=>pl.id===planId)) return hint.textContent = 'เลือกกองทุนและแผนก่อน';
+  if (units==='' || units<=0) return hint.textContent = 'ใส่จำนวนหน่วยที่มากกว่า 0';
+  state.tx.push({id:uid(), planId, fundId, kind: $('#txKind').value==='sell'?'sell':'buy',
+                 date: /^\d{4}-\d{2}-\d{2}$/.test($('#txDate').value) ? $('#txDate').value : '',
+                 units, amount: amount==='' ? 0 : amount});
+  save();
+  $('#txUnits').value = ''; $('#txAmount').value = '';
+  hint.textContent = 'บันทึกแล้ว';
+  renderHoldings();
+}
+
 /* ============ UI: หน้าแรก — สรุปกองของคุณ ============
    ไม่ใช่หน้าข่าว เพราะ ก.ล.ต. ไม่มี API ข่าว — เป็นสรุปของกองที่ผู้ใช้ติดตามและถืออยู่
    ทุกบรรทัดคำนวณสดจากข้อมูลที่มี ส่วนที่ยังไม่มีข้อมูลจะบอกว่าขาดอะไร ไม่เดาแทน */
@@ -1014,7 +1119,7 @@ function renderHome(){
   if (!$('#homeKpis')) return;
   const p = state.profile;
   const res = state.funds.map(f=>({f, e:evaluate(f,p)}));
-  const rows = holdingRows(), held = rows.filter(r=>r.u>0);
+  const rows = holdingRows(), held = rows;   // หน้าแรกดูรวมทุกแผน
   const totV = held.reduce((t,r)=>t+(r.value||0),0);
   const totC = held.reduce((t,r)=>t+(r.cost||0),0);
   const avg = res.length ? Math.round(res.reduce((t,r)=>t+r.e.total,0)/res.length) : null;
@@ -1065,59 +1170,68 @@ function renderHome(){
    มูลค่าจริง = จำนวนหน่วยที่ผู้ใช้กรอก x ราคาต่อหน่วยล่าสุดจาก ก.ล.ต.
    กองที่ยังไม่มีราคา (ข้อมูลรอบเก่า) จะไม่ถูกนับรวม และบอกไว้ชัดๆ แทนที่จะเดาเป็น 0 */
 const priceOf = f => (f.sec && f.sec.price && f.sec.price.nav) || null;
-function holdingRows(){
-  return state.funds.map(f=>{
-    const h = state.holdings[f.id] || {u:0, c:0};
-    const nav = priceOf(f);
-    const value = nav && h.u ? h.u*nav : null;
-    const cost  = h.u && h.c ? h.u*h.c : null;
-    return {f, u:h.u||'', c:h.c||'', nav, value, cost,
-            pl: (value!=null && cost!=null) ? value-cost : null,
-            noPrice: h.u>0 && !nav};
+/* ต้นทุนเฉลี่ยจากรายการจริง — DCA ซื้อหลายครั้งราคาไม่เท่ากัน ต้นทุนตัวเดียวที่ผู้ใช้กรอกเองจึงใช้ไม่ได้
+   ขายคืนใช้วิธีต้นทุนเฉลี่ย (ตัดต้นทุนตามราคาเฉลี่ย ณ ตอนขาย ไม่ใช่ตัดด้วยเงินที่ได้รับ)
+   จึงต้องเรียงตามวันที่ก่อน — รายการที่ไม่ระบุวันที่ (ยอดยกมา) ถือว่าเก่าที่สุด */
+function position(txs){
+  let units = 0, cost = 0;
+  txs.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).forEach(t=>{
+    if (t.kind==='sell'){
+      const avg = units>0 ? cost/units : 0, u = Math.min(t.units, units);
+      units -= u; cost -= u*avg;
+    } else { units += t.units; cost += t.amount; }
   });
+  return {units: Math.max(0,units), cost: Math.max(0,cost)};
+}
+function holdingRows(planId){          // planId ว่าง = รวมทุกแผน
+  const scope = state.tx.filter(t=>!planId || t.planId===planId);
+  return state.funds.map(f=>{
+    const txs = scope.filter(t=>t.fundId===f.id);
+    const {units, cost} = position(txs);
+    const nav = priceOf(f);
+    const value = nav && units ? units*nav : null;
+    return {f, txs, u:units, c: units ? cost/units : 0, nav, value,
+            cost: units && cost ? cost : null,
+            pl: (value!=null && units && cost) ? value-cost : null,
+            noPrice: units>0 && !nav};
+  }).filter(r=>r.u>0);                  // ถือ 0 หน่วย = ไม่ใช่รายการในพอร์ต
 }
 function renderHoldings(){
   if (!$('#holdTable')) return;
-  const rows = holdingRows();
-  const held = rows.filter(r=>r.u>0);
-  const totV = held.reduce((t,r)=>t+(r.value||0),0);
-  const totC = held.reduce((t,r)=>t+(r.cost||0),0);
+  fillPlanSelects();
+  const rows = holdingRows(pfScopeId);
+  const totV = rows.reduce((t,r)=>t+(r.value||0),0);
+  const totC = rows.reduce((t,r)=>t+(r.cost||0),0);
   const pl = totV && totC ? totV-totC : 0;
-  const feeYr = held.reduce((t,r)=>t+(r.value||0)*num(r.f.ter)/100,0);
+  const feeYr = rows.reduce((t,r)=>t+(r.value||0)*num(r.f.ter)/100,0);
   const wTer = totV ? feeYr/totV*100 : 0;
+  const scopeName = pfScopeId ? (state.plans.find(x=>x.id===pfScopeId)||{}).name : 'ทุกแผน';
 
   $('#pfKpis').innerHTML = [
-    ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', held.length?`${held.length} กองทุน`:'ยังไม่ได้กรอกจำนวนหน่วย'],
-    ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?'จากต้นทุนเฉลี่ยที่กรอก':'กรอกต้นทุนเพื่อดูกำไร/ขาดทุน'],
+    ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', rows.length?`${rows.length} กองทุน · ${scopeName}`:'ยังไม่มีรายการซื้อ'],
+    ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?'จากราคาที่ซื้อจริงแต่ละครั้ง':'ใส่จำนวนเงินในรายการซื้อ'],
     ['กำไร/ขาดทุน', (totV&&totC)?`${pl>=0?'+':'−'}${fmtB(Math.abs(pl))}`:'—', (totV&&totC)?pct(pl/totC*100,2):''],
     ['ค่าธรรมเนียมต่อปี (ประมาณ)', totV?fmtB(feeYr):'—', totV?`TER ถ่วงน้ำหนัก ${wTer.toFixed(2)}%`:'']
   ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
 
-  $('#holdTable').innerHTML = state.funds.length ? `<thead><tr><th>กองทุน</th><th class="num">หน่วย</th><th class="num">ต้นทุน/หน่วย</th><th class="num">NAV ล่าสุด</th><th class="num">มูลค่า</th><th class="num">กำไร/ขาดทุน</th><th class="num">สัดส่วน</th></tr></thead><tbody>${
-    rows.map(r=>`<tr class="pf-row">
+  $('#holdTable').innerHTML = rows.length ? `<thead><tr><th>กองทุน</th><th class="num">หน่วย</th><th class="num">ต้นทุนเฉลี่ย</th><th class="num">NAV ล่าสุด</th><th class="num">มูลค่า</th><th class="num">กำไร/ขาดทุน</th><th class="num">สัดส่วน</th></tr></thead><tbody>${
+    rows.map(r=>`<tr>
       <td>${esc(r.f.name)}${r.noPrice?' <span class="tag">ยังไม่มีราคา</span>':''}</td>
-      <td class="num"><input type="number" min="0" step="1" data-hu="${esc(r.f.id)}" value="${r.u}"></td>
-      <td class="num"><input type="number" min="0" step="0.0001" data-hc="${esc(r.f.id)}" value="${r.c}"></td>
+      <td class="num">${r.u.toLocaleString('th-TH',{maximumFractionDigits:4})}</td>
+      <td class="num">${r.c?r.c.toFixed(4):'—'}</td>
       <td class="num">${r.nav!=null?r.nav.toFixed(4):'—'}</td>
       <td class="num">${r.value!=null?fmtB(r.value):'—'}</td>
       <td class="num" ${r.pl!=null?`style="color:var(${r.pl>=0?'--good':'--bad'})"`:''}>${r.pl!=null?`${r.pl>=0?'+':'−'}${fmtB(Math.abs(r.pl))}`:'—'}</td>
       <td class="num">${(r.value!=null&&totV)?(r.value/totV*100).toFixed(1)+'%':'—'}</td></tr>`).join('')}</tbody>`
-    : '<tbody><tr><td class="muted">ยังไม่มีกองทุน — เพิ่มในแท็บ "วางแผนลงทุน" ก่อน</td></tr></tbody>';
+    : '<tbody><tr><td class="muted">ยังไม่มีรายการซื้อ — บันทึกรายการแรกในกล่องด้านล่าง</td></tr></tbody>';
 
-  const asOf = held.map(r=>r.f.sec && r.f.sec.price && r.f.sec.price.navDate).filter(Boolean).sort().pop();
+  const asOf = rows.map(r=>r.f.sec && r.f.sec.price && r.f.sec.price.navDate).filter(Boolean).sort().pop();
   $('#holdNote').textContent = asOf ? `ราคาต่อหน่วย ณ ${asOf} · มูลค่าคำนวณจากราคานี้ ไม่ใช่ราคาเรียลไทม์` : '';
 
-  document.querySelectorAll('[data-hu],[data-hc]').forEach(el=>el.addEventListener('change',()=>{
-    const id = el.dataset.hu || el.dataset.hc, cur = state.holdings[id] || {u:0,c:0};
-    const v = cleanNum(el.value,0,1e12) || 0;
-    if (el.dataset.hu) cur.u = v; else cur.c = v;
-    if (cur.u>0) state.holdings[id] = cur; else delete state.holdings[id];
-    save(); renderHoldings();
-  }));
+  renderTxTable();
 
-  // สัดส่วนตามประเภทสินทรัพย์
   const byClass = {};
-  held.forEach(r=>{ if (r.value!=null) byClass[r.f.assetClass] = (byClass[r.f.assetClass]||0) + r.value; });
+  rows.forEach(r=>{ if (r.value!=null) byClass[r.f.assetClass] = (byClass[r.f.assetClass]||0) + r.value; });
   const slices = Object.entries(byClass).sort((a,b)=>b[1]-a[1])
     .map(([k,v])=>[(ASSET[k]||ASSET.mixed).label, +(v/totV*100).toFixed(2)]);
   $('#holdLegend').innerHTML = slices.map((x,i)=>`<li><span class="sw" style="background:var(${DONUT[i%DONUT.length]})"></span><span class="nm">${esc(x[0])}</span><span class="pv">${x[1].toFixed(1)}%</span></li>`).join('')
@@ -1126,12 +1240,32 @@ function renderHoldings(){
 
   const al = [];
   const missing = rows.filter(r=>r.noPrice).length;
-  if (missing) al.push(['warn', `${missing} กองยังไม่มีราคาต่อหน่วย — ข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บราคา กด Run workflow หนึ่งรอบแล้วกด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
+  if (missing) al.push(['warn', `${missing} กองยังไม่มีราคาต่อหน่วย — ข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บราคา กด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
   if (totV && wTer>1.5) al.push(['warn', `ค่าธรรมเนียมรวมทั้งพอร์ต ${wTer.toFixed(2)}%/ปี คิดเป็น ${fmtB(feeYr)} ถูกหักทุกปีไม่ว่าพอร์ตจะกำไรหรือขาดทุน`]);
-  held.filter(r=>r.pl!=null && r.pl<0).forEach(r=>al.push(['warn', `${r.f.name.split(' —')[0]} ขาดทุน ${fmtB(Math.abs(r.pl))} (${pct(r.pl/r.cost*100,1)})`]));
-  if (held.length===1) al.push(['', 'พอร์ตมีกองเดียว — กระจายไปสินทรัพย์หรือภูมิภาคอื่นเพื่อลดความเสี่ยง']);
-  if (!held.length) al.push(['', 'กรอกจำนวนหน่วยในตารางด้านบนเพื่อเริ่มติดตามพอร์ต']);
+  rows.filter(r=>r.pl!=null && r.pl<0).forEach(r=>al.push(['warn', `${r.f.name.split(' —')[0]} ขาดทุน ${fmtB(Math.abs(r.pl))} (${pct(r.pl/r.cost*100,1)})`]));
+  if (rows.length===1) al.push(['', 'พอร์ตมีกองเดียว — กระจายไปสินทรัพย์หรือภูมิภาคอื่นเพื่อลดความเสี่ยง']);
+  if (!rows.length) al.push(['', 'บันทึกรายการซื้อในกล่องด้านล่างเพื่อเริ่มติดตามพอร์ต']);
   $('#holdAlerts').innerHTML = al.map(([c,t])=>`<div class="callout ${c}">${esc(t)}</div>`).join('');
+}
+function renderTxTable(){
+  const box = $('#txTable'); if (!box) return;
+  const planName = id => (state.plans.find(p=>p.id===id)||{}).name || '—';
+  const fundName = id => { const f = state.funds.find(x=>x.id===id); return f ? f.name.split(' —')[0] : '(กองที่ถูกลบ)'; };
+  const list = state.tx.filter(t=>!pfScopeId || t.planId===pfScopeId)
+                       .slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  box.innerHTML = list.length ? `<thead><tr><th>วันที่</th><th>กองทุน</th><th>แผน</th><th>ประเภท</th><th class="num">จำนวนเงิน</th><th class="num">หน่วย</th><th class="num">ราคา/หน่วย</th><th></th></tr></thead><tbody>${
+    list.map(t=>`<tr>
+      <td>${esc(t.date || 'ยอดยกมา')}</td>
+      <td>${esc(fundName(t.fundId))}</td>
+      <td>${esc(planName(t.planId))}</td>
+      <td>${t.kind==='sell'?'ขายคืน':'ซื้อ'}</td>
+      <td class="num">${t.amount?fmtB(t.amount):'—'}</td>
+      <td class="num">${t.units.toLocaleString('th-TH',{maximumFractionDigits:4})}</td>
+      <td class="num">${t.amount&&t.units?(t.amount/t.units).toFixed(4):'—'}</td>
+      <td><button class="btn small danger" data-txdel="${esc(t.id)}">ลบ</button></td></tr>`).join('')}</tbody>`
+    : '<tbody><tr><td class="muted">ยังไม่มีรายการ</td></tr></tbody>';
+  document.querySelectorAll('[data-txdel]').forEach(b=>b.addEventListener('click',()=>{
+    state.tx = state.tx.filter(t=>t.id!==b.dataset.txdel); save(); renderHoldings(); }));
 }
 
 /* ============ UI: plan ============ */
@@ -1240,6 +1374,7 @@ function draw(id, cfg){ if (charts[id]) charts[id].destroy(); charts[id] = new C
 
 /* ============ init ============ */
 buildForm();
+planUI();
 renderFunds();
 secInit();
 try{ const t = localStorage.getItem(KEY+'.tab'); if (t && $('#panel-'+t)) showTab(t); }catch(e){}

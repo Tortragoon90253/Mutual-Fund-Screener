@@ -76,6 +76,10 @@ tr.sel{background:var(--accent-soft)}
 tr.sel .linklike{color:var(--accent);font-weight:600}
 @media (max-width:1100px){.screen-layout{grid-template-columns:minmax(0,1fr)}.screen-side{position:static}.fp-donut{margin-left:0}}
 @media (max-width:860px){.plan-layout{grid-template-columns:minmax(0,1fr)}.side{position:static}}
+.planpick{display:flex;align-items:center;margin-left:auto}
+.planpick select{width:auto;min-width:150px;max-width:230px;padding:5px 9px;font-size:.85rem;background:var(--surface-2)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.stamp{margin-left:14px}
 .soon{max-width:640px}
 .soon h2{font-size:1.15rem;margin:0 0 6px}
 .soon ul{margin:10px 0 0;padding-left:20px;color:var(--muted);font-size:.9rem;line-height:1.8}
@@ -193,6 +197,10 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     <button data-sec="plan" class="active">วางแผนลงทุน</button>
     <button data-sec="port">พอร์ตของฉัน</button>
   </nav>
+  <label class="planpick">
+    <span class="vh">แผนการลงทุน</span>
+    <select id="planPick"></select>
+  </label>
   <span class="stamp" id="dataStamp"></span>
 </div>
 
@@ -220,12 +228,32 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 
 <!-- PORTFOLIO -->
 <div class="section" id="section-port">
+  <div class="row" style="margin-bottom:14px">
+    <label class="f" style="max-width:260px">ดูพอร์ตของ<select id="pfScope"></select></label>
+  </div>
   <div class="kpis" id="pfKpis"></div>
   <div class="card">
     <h2>รายการที่ถืออยู่</h2>
-    <p class="sub">กรอกจำนวนหน่วยและต้นทุนเฉลี่ยต่อหน่วยจากใบยืนยันการซื้อ — กองที่ยังไม่ได้กรอกจำนวนหน่วยจะไม่ถูกนับ · ราคาต่อหน่วยล่าสุดมาจาก ก.ล.ต.</p>
+    <p class="sub">คำนวณจากรายการซื้อขายด้านล่าง — ต้นทุนเฉลี่ยมาจากราคาที่ซื้อจริงแต่ละครั้ง</p>
     <div class="scroll"><table id="holdTable"></table></div>
     <p class="muted" id="holdNote" style="margin:10px 0 0"></p>
+  </div>
+  <div class="card">
+    <h2>บันทึกรายการซื้อขาย</h2>
+    <p class="sub">กรอกจากใบยืนยันการซื้อ — ใส่จำนวนเงินและจำนวนหน่วย โปรแกรมคำนวณราคาต่อหน่วยให้</p>
+    <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))">
+      <label class="f">กองทุน<select id="txFund"></select></label>
+      <label class="f">แผน<select id="txPlan"></select></label>
+      <label class="f">วันที่<input type="date" id="txDate"></label>
+      <label class="f">ประเภท<select id="txKind"><option value="buy">ซื้อ</option><option value="sell">ขายคืน</option></select></label>
+      <label class="f">จำนวนเงิน (บาท)<input type="number" id="txAmount" min="0" step="0.01"></label>
+      <label class="f">จำนวนหน่วย<input type="number" id="txUnits" min="0" step="0.0001"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary small" type="button" id="txAdd">เพิ่มรายการ</button>
+      <span class="muted" id="txHint"></span>
+    </div>
+    <div class="scroll" style="margin-top:12px"><table id="txTable"></table></div>
   </div>
   <div class="two">
     <div class="card">
@@ -245,6 +273,15 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 <div class="section active" id="section-plan">
 <div class="plan-layout">
 <aside class="side">
+  <div class="side-group">
+    <h3>แผนนี้</h3>
+      <label class="f">ชื่อแผน<input type="text" id="planName" maxlength="40"></label>
+      <div class="row" style="margin-top:8px;gap:6px">
+        <button class="btn small" type="button" id="planNew">แผนใหม่</button>
+        <button class="btn small" type="button" id="planCopy">ทำสำเนา</button>
+        <button class="btn small danger" type="button" id="planDel">ลบแผน</button>
+      </div>
+  </div>
   <div class="side-group">
     <h3>โปรไฟล์ของคุณ</h3>
       <label class="f">เป้าหมายการลงทุน
