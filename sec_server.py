@@ -155,11 +155,14 @@ DATASETS = {
     "mins":    ("/v2/fund/factsheet/subscription-redemption-minimums", True, True),
     "top5":    ("/v2/fund/factsheet/top5-holdings", False, True),
     "alloc":   ("/v2/fund/factsheet/asset-allocation", False, True),
+    "urls":    ("/v2/fund/factsheet/urls", True, False),
+    "bench":   ("/v2/fund/factsheet/benchmarks", False, True),
 }
 DATASET_LABELS = {"specs": "ประเภทพิเศษ", "risk": "ระดับความเสี่ยง", "stats": "ข้อมูลสถิติ", "fees": "ค่าธรรมเนียม",
                   "genfees": "ค่าธรรมเนียมตามโครงการ", "perf": "ผลการดำเนินงาน", "div": "นโยบายปันผล",
                   "periods": "ระยะเวลาซื้อขาย", "mins": "มูลค่าซื้อขั้นต่ำ", "top5": "5 อันดับแรก",
-                  "alloc": "สัดส่วนประเภททรัพย์สิน", "nav": "NAV"}
+                  "alloc": "สัดส่วนประเภททรัพย์สิน", "urls": "ลิงก์ Fact Sheet",
+                  "bench": "ดัชนีชี้วัด", "divh": "ประวัติปันผล", "nav": "NAV"}
 
 
 def pick(rows, cls, class_level=True, dated=True):
@@ -239,6 +242,51 @@ def fund_aum(rows):
             latest[cls] = (d, v)
     total = sum(v for _, v in latest.values())
     return round(total / 1e6, 1) if total > 0 else ""
+
+
+def factsheet_link(rows):
+    """ลิงก์ Fact Sheet ฉบับล่าสุด — ใช้ของ บลจ. ก่อน ไม่มีจึงใช้สำเนาที่ ก.ล.ต. เก็บไว้"""
+    newest = None
+    for r in rows:
+        if (r.get("amc_url_factsheet") or r.get("pdf_factsheet")) and            (newest is None or (r.get("as_of_date") or "") > (newest.get("as_of_date") or "")):
+            newest = r
+    if not newest:
+        return {}
+    url = (newest.get("amc_url_factsheet") or newest.get("pdf_factsheet") or "").strip()
+    return {"url": url, "asOf": (newest.get("as_of_date") or "")[:10]} if url.startswith("https://") else {}
+
+
+def benchmarks_of(rows):
+    """ชื่อดัชนีชี้วัดที่ บลจ. ใช้เทียบ — บลจ. เลือกเองได้ ผู้ลงทุนจึงควรเห็นว่าเทียบกับอะไร"""
+    out = []
+    for r in sorted(rows, key=lambda r: to_num(r.get("group_seq")) or 0):
+        name = re.sub(r"\s+", " ", str(r.get("benchmark") or "")).strip()
+        if name and name not in out:
+            out.append(name[:160])
+    return out[:4]
+
+
+def dividend_stats(rows, nav):
+    """ปันผลย้อนหลัง: รายการล่าสุด และอัตราผลตอบแทนปันผล 12 เดือนล่าสุดเทียบราคาต่อหน่วย.
+    ก.ล.ต. ไม่มีพารามิเตอร์กรองวันที่ จึงต้องตัดเองหลังดึงมา และเก็บแค่ 3 ปีล่าสุด"""
+    cutoff = (date.today() - timedelta(days=1095)).isoformat()
+    year_ago = (date.today() - timedelta(days=365)).isoformat()
+    pays, last12 = [], 0.0
+    for r in rows:
+        d = str(r.get("dividend_date") or "")[:10]
+        v = to_num(r.get("dividend_value"))
+        if not d or v is None or v <= 0 or d < cutoff:
+            continue
+        pays.append([d, round(v, 4)])
+        if d >= year_ago:
+            last12 += v
+    if not pays:
+        return {}
+    pays.sort(reverse=True)
+    out = {"pays": pays[:12], "last12": round(last12, 4)}
+    if nav and last12:
+        out["yield"] = round(last12 / nav * 100, 2)
+    return out
 
 
 def fund_price(rows):
@@ -463,6 +511,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
     alloc_rows = get("alloc")
     nav_rows = pick(raw.get("nav") or [], cls, True, False)
+    url_rows, bench_rows = get("urls"), get("bench")
     sd_by, cal, cal_bm = perf_extra(perf_rows)
     today = date.today()
 
@@ -518,6 +567,7 @@ def assemble_fund(profile, cls, raw, notes=None):
               "ret1": "ผลตอบแทน 1 ปี", "ret5": "ผลตอบแทน 5 ปี", "aum": "ขนาดกอง", "settle": "T+ รับเงินคืน"}
     missing = [label for k, label in labels.items() if fund.get(k) in ("", None)]
     asof = max([r.get("start_date") or "" for r in stats_rows + fee_rows + perf_rows + risk] or [""])
+    price = fund_price(nav_rows)
     port_asof = max([r.get("start_date") or "" for r in list(alloc_rows) + list(top5)] or [""])
     fund["sec"] = {"projId": proj_id, "cls": cls, "asOf": asof, "fetched": today.isoformat(),
                    "notes": notes, "missing": missing,
@@ -527,7 +577,10 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "stats": stats_extra(stats),                       # turnover / duration / YTM -> แสดงในการ์ด
                    "peer": peer_rows(perf_rows),
                    "sdBy": sd_by, "cal": cal, "calBm": cal_bm,       # เก็บไว้วัด ยังไม่คิดคะแนน
-                   "price": fund_price(nav_rows)}                    # ราคาต่อหน่วย -> หน้าพอร์ต
+                   "price": price,                                   # ราคาต่อหน่วย -> หน้าพอร์ต
+                   "link": factsheet_link(url_rows),                 # ปุ่มเปิด Fact Sheet ตัวจริง
+                   "bench": benchmarks_of(bench_rows),               # เทียบกับดัชนีอะไร
+                   "div": dividend_stats(raw.get("divh") or [], price.get("nav"))}
     return fund
 
 

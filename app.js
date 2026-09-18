@@ -174,6 +174,15 @@ function sanitizeFund(f){
     const peerRows = a => Array.isArray(a) ? a.slice(0,40)
       .map(x=>Array.isArray(x) ? [cleanStr(x[0],80), cleanStr(x[1],20), cleanNum(x[2],-100,1000)] : null)
       .filter(x=>x && x[1] && x[2]!=='') : [];
+    // รับเฉพาะ https เท่านั้น ลิงก์มาจากไฟล์ข้อมูลภายนอก
+    const link = o => (o && typeof o==='object' && typeof o.url==='string' && /^https:\/\//.test(o.url))
+      ? {url:cleanStr(o.url,400), asOf:cleanStr(o.asOf,20)} : {};
+    const divi = o => { if (!o || typeof o!=='object') return {};
+      const out={}; ['last12','yield'].forEach(k=>{ const v=cleanNum(o[k],0,1e6); if (v!=='') out[k]=v; });
+      out.pays = Array.isArray(o.pays) ? o.pays.slice(0,12)
+        .map(x=>Array.isArray(x)?[cleanStr(x[0],20), cleanNum(x[1],0,1e5)]:null)
+        .filter(x=>x && x[0] && x[1]!=='') : [];
+      return (out.pays.length || out.last12) ? out : {}; };
     const price = o => { if (!o || typeof o!=='object') return {};
       const out = {navDate: cleanStr(o.navDate,20)};
       ['nav','sell','buy'].forEach(k=>{ const v = cleanNum(o[k],0,1e7); if (v!=='' && v>0) out[k]=v; });
@@ -184,7 +193,8 @@ function sanitizeFund(f){
       return out; };
     out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing),
                alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20), stats:stats(s.stats),
-               cal:years(s.cal), calBm:years(s.calBm), peer:peerRows(s.peer), price:price(s.price)};
+               cal:years(s.cal), calBm:years(s.calBm), peer:peerRows(s.peer), price:price(s.price),
+               link:link(s.link), bench:list(s.bench), div:divi(s.div)};
     if (!out.sec.projId) delete out.sec;
   }
   return out;
@@ -305,6 +315,8 @@ function evaluate(f, p){
   // 5 past performance
   { const r=[]; const per=[['ret1','bm1','1 ปี'],['ret3','bm3','3 ปี'],['ret5','bm5','5 ปี']].filter(([x,y])=>has(f[x])&&has(f[y]));
     let s;
+    const bench = (f.sec && f.sec.bench) || [];
+    if (per.length && bench.length) r.push(R('good', `ดัชนีชี้วัด: ${bench.join(' · ')}`));
     const bat = battingAvg(f);
     per.forEach(([x,y,l])=>{ const d=num(f[x])-num(f[y]);
       r.push(R(d>=0?'good':'warn',`${l}: กอง ${pct(num(f[x]),2)} vs ดัชนี ${pct(num(f[y]),2)} (${d>=0?'ชนะ':'แพ้'} ${Math.abs(d).toFixed(2)}%)`)); });
@@ -350,6 +362,11 @@ function evaluate(f, p){
   { let s; const r=[]; const d=f.dividend==='yes';
     if (p.goal==='income'){ s = d?100:50; r.push(d ? R('good','จ่ายปันผล ตรงกับเป้าหมายกระแสเงินสด') : R('warn','ไม่จ่ายปันผล — ถ้าต้องการกระแสเงินสด อาจใช้แบบขายคืนอัตโนมัติแทน')); }
     else { s = d?60:100; r.push(d ? R('warn','จ่ายปันผล: ถูกหักภาษี 10% และเงินไม่ได้ทบต้นเต็มที่') : R('good','ไม่จ่ายปันผล เงินทบต้นเต็มที่ และกำไรจากการขายคืนไม่ต้องเสียภาษี')); }
+    // นโยบายบอกแค่ว่าจ่ายหรือไม่ ประวัติจริงบอกว่าจ่ายเท่าไรและสม่ำเสมอแค่ไหน
+    const dv = (f.sec && f.sec.div) || {};
+    if (dv.yield) r.push(R(p.goal==='income' ? (dv.yield>=3?'good':'warn') : 'warn',
+      `ปันผลจริง 12 เดือนล่าสุด ${dv.last12} บาท/หน่วย ≈ ${dv.yield}% ของราคาต่อหน่วย (จ่าย ${dv.pays.length} ครั้งใน 3 ปี)`));
+    else if (d && (f.sec && f.sec.projId)) r.push(R('warn','นโยบายระบุว่าจ่ายปันผล แต่ไม่พบประวัติการจ่ายใน 3 ปีล่าสุด'));
     C('c7', s, r); }
 
   // 8 liquidity
@@ -553,7 +570,7 @@ function renderFunds(){
         ${f.sec.missing?.length?`<div class="meta" style="color:var(--warn)">ต้องกรอกเอง: ${esc(f.sec.missing.join(', '))}</div>`:''}
         ${f.sec.notes?.length?`<ul class="reasons">${f.sec.notes.map(n=>`<li class="warn">${esc(n)}</li>`).join('')}</ul>`:''}`:''}
       ${portBlock(f)}
-      <div class="row" style="margin-top:8px"><button class="btn small" data-edit="${esc(f.id)}">แก้ไข</button>${f.sec&&secReady?`<button class="btn small" data-refresh="${esc(f.id)}">อัปเดตจาก ก.ล.ต.</button>`:''}<button class="btn small danger" data-del="${esc(f.id)}">ลบ</button></div>
+      <div class="row" style="margin-top:8px">${f.sec&&f.sec.link&&f.sec.link.url?`<a class="btn small" href="${esc(f.sec.link.url)}" target="_blank" rel="noopener noreferrer">Fact Sheet ↗</a>`:''}<button class="btn small" data-edit="${esc(f.id)}">แก้ไข</button>${f.sec&&secReady?`<button class="btn small" data-refresh="${esc(f.id)}">อัปเดตจาก ก.ล.ต.</button>`:''}<button class="btn small danger" data-del="${esc(f.id)}">ลบ</button></div>
     </div>`; }).join('') : '<p class="muted">ยังไม่มีกองทุน — กรอกฟอร์มด้านบน หรือกด "โหลดกองตัวอย่าง"</p>';
   // a canvas inside a closed <details> has no size, so the donut is drawn the first time it opens
   $('#fundList').querySelectorAll('details.port').forEach(d=>

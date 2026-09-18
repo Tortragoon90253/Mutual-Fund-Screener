@@ -113,6 +113,8 @@ def collect_all():
     jobs = {"profiles": fetch_profiles}
     for key, (path, _, dated) in sec.DATASETS.items():
         jobs[key] = (lambda p=path, d=dated: fetch_all(p, {"latest": "true"} if d else None))
+    # ปันผลไม่มีพารามิเตอร์กรองวันที่ จึงต้องดึงประวัติทั้งหมดแล้วมาตัดเองใน dividend_stats
+    jobs["divh"] = lambda: fetch_all("/v2/fund/daily-info/dividend-history")
     jobs["nav"] = lambda: fetch_all("/v2/fund/daily-info/nav", {
         "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(), "end_nav_date": today.isoformat()})
 
@@ -201,6 +203,7 @@ def collect_watchlist():
             for name, (path, _, dated) in sec.DATASETS.items():
                 raw[name] = fetch_all(path, {"proj_id": p["proj_id"], "latest": "true" if dated else None})
             today = date.today()
+            raw["divh"] = fetch_all("/v2/fund/daily-info/dividend-history", {"proj_id": p["proj_id"]})
             raw["nav"] = fetch_all("/v2/fund/daily-info/nav", {
                 "proj_id": p["proj_id"], "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(),
                 "end_nav_date": today.isoformat()})
@@ -251,7 +254,7 @@ def build_diag(amc_files):
     """How complete the SEC data really is. A criterion resting on a field only a few funds
     report is worse than no criterion, so every candidate field is measured before it is scored."""
     # seed every candidate at 0 so a field nobody reports shows as 0.0%, not as a missing key
-    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm", "price"] + sec.STATS_EXTRA})
+    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div"] + sec.STATS_EXTRA})
     n, peer_desc = 0, Counter()
     for recs in amc_files.values():
         for f in recs.values():
@@ -260,7 +263,7 @@ def build_diag(amc_files):
                 if f.get(k) not in ("", None):
                     filled[k] += 1
             meta = f.get("sec") or {}
-            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm", "price"):
+            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm", "price", "link", "bench", "div"):
                 if meta.get(k):
                     filled[k] += 1
             for k in (meta.get("stats") or {}):
