@@ -198,18 +198,23 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 
 <!-- HOME -->
 <div class="section" id="section-home">
-  <div class="card soon">
-    <h2>หน้าแรก — ความเคลื่อนไหวของกองทุน</h2>
-    <p class="sub">ยังไม่เปิดใช้งาน กำลังพัฒนา</p>
-    <p style="margin:0;font-size:.92rem">หน้านี้จะรวมสิ่งที่เปลี่ยนไปนับจากข้อมูลรอบก่อน — ไม่ใช่ข่าวจากสำนักข่าว เพราะ ก.ล.ต. ไม่มี API ข่าว แต่เป็นการเทียบข้อมูลสองรอบ:</p>
-    <ul>
-      <li>กองที่เพิ่งส่ง Fact Sheet ใหม่</li>
-      <li>ประกาศจ่ายปันผล (ต้องต่อ endpoint <code>dividend-history</code>)</li>
-      <li>กองเปิดใหม่ที่กำลังเสนอขาย (endpoint <code>ipos</code>)</li>
-      <li>ค่าธรรมเนียมหรือระดับความเสี่ยงที่เปลี่ยน</li>
-      <li>สัดส่วนทรัพย์สินที่ขยับจากรอบก่อน</li>
-    </ul>
-    <p class="muted" style="font-size:.86rem;margin:12px 0 0">ต้องเก็บข้อมูลรอบก่อนไว้เปรียบเทียบก่อน จึงจะเริ่มมีอะไรให้แสดง</p>
+  <div class="kpis" id="homeKpis"></div>
+  <div class="two">
+    <div class="card">
+      <h2>ต้องดู</h2>
+      <p class="sub">เรียงจากเรื่องที่กระทบมากที่สุด — คำนวณสดจากโปรไฟล์และข้อมูล ก.ล.ต. ล่าสุด</p>
+      <div id="homeAlerts"></div>
+    </div>
+    <div class="card">
+      <h2>ปันผล</h2>
+      <p class="sub">จากประวัติการจ่ายจริง 3 ปีล่าสุดที่ ก.ล.ต. บันทึกไว้</p>
+      <div id="homeDiv"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Fact Sheet ล่าสุดของกองที่คุณติดตาม</h2>
+    <p class="sub">เรียงตามวันที่ของข้อมูลในแฟกต์ชีต ไม่ใช่วันที่ดึงข้อมูล</p>
+    <div class="scroll"><table id="homeFresh"></table></div>
   </div>
 </div>
 

@@ -431,6 +431,7 @@ function showSection(sec){
   document.querySelectorAll('.section').forEach(el=>el.classList.toggle('active', el.id==='section-'+sec));
   try{ localStorage.setItem(KEY+'.sec', sec); }catch(e){}
   if (sec==='port') renderHoldings();
+  if (sec==='home') renderHome();
 }
 
 document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
@@ -989,13 +990,66 @@ function renderScreen(){
   save();
 }
 
+/* ============ UI: หน้าแรก — สรุปกองของคุณ ============
+   ไม่ใช่หน้าข่าว เพราะ ก.ล.ต. ไม่มี API ข่าว — เป็นสรุปของกองที่ผู้ใช้ติดตามและถืออยู่
+   ทุกบรรทัดคำนวณสดจากข้อมูลที่มี ส่วนที่ยังไม่มีข้อมูลจะบอกว่าขาดอะไร ไม่เดาแทน */
+function renderHome(){
+  if (!$('#homeKpis')) return;
+  const p = state.profile;
+  const res = state.funds.map(f=>({f, e:evaluate(f,p)}));
+  const rows = holdingRows(), held = rows.filter(r=>r.u>0);
+  const totV = held.reduce((t,r)=>t+(r.value||0),0);
+  const totC = held.reduce((t,r)=>t+(r.cost||0),0);
+  const avg = res.length ? Math.round(res.reduce((t,r)=>t+r.e.total,0)/res.length) : null;
+  const today = new Date().toISOString().slice(0,10);
+  const divs = [];
+  state.funds.forEach(f=>((f.sec && f.sec.div && f.sec.div.pays) || []).forEach(([d,v])=>divs.push({f,d,v})));
+  divs.sort((a,b)=>b.d.localeCompare(a.d));
+  const upcoming = divs.filter(x=>x.d>=today);
+
+  $('#homeKpis').innerHTML = [
+    ['มูลค่าพอร์ต', totV?fmtB(totV):'—', totV&&totC?`${totV>=totC?'+':'−'}${fmtB(Math.abs(totV-totC))} (${pct((totV-totC)/totC*100,2)})`:'กรอกจำนวนหน่วยในหน้าพอร์ต'],
+    ['กองที่ติดตาม', String(state.funds.length), res.filter(r=>!r.e.pass).length?`ไม่ผ่านเกณฑ์ ${res.filter(r=>!r.e.pass).length} กอง`:'ผ่านเกณฑ์ทุกกอง'],
+    ['คะแนนเฉลี่ย', avg!=null?String(avg):'—', avg!=null?'ตามโปรไฟล์ปัจจุบัน':''],
+    ['ปันผลที่จะถึง', upcoming.length?String(upcoming.length):'—', upcoming.length?`รายการถัดไป ${upcoming.at(-1).d}`:'ไม่มีรายการที่ประกาศไว้']
+  ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
+
+  // ต้องดู: ข้อที่ตกเกณฑ์ก่อน แล้วค่อยคำเตือนระดับ bad แล้วจึงขาดทุนจริง
+  const al = [];
+  res.forEach(r=>{
+    const nm = r.f.name.split(' —')[0];
+    r.e.fails.forEach(t=>al.push([0,'warn',`${nm}: ${t}`]));
+    CRIT.forEach(c=>r.e.crit[c.k].reasons.filter(x=>x.lvl==='bad').forEach(x=>al.push([1,'warn',`${nm}: ${x.t}`])));
+  });
+  held.filter(r=>r.pl!=null && r.pl<0).forEach(r=>
+    al.push([2,'warn',`${r.f.name.split(' —')[0]}: ขาดทุน ${fmtB(Math.abs(r.pl))} (${pct(r.pl/r.cost*100,1)})`]));
+  rows.filter(r=>r.noPrice).length && al.push([3,'', `${rows.filter(r=>r.noPrice).length} กองยังไม่มีราคาต่อหน่วย — กด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
+  al.sort((a,b)=>a[0]-b[0]);
+  $('#homeAlerts').innerHTML = al.length
+    ? al.slice(0,8).map(([,c,t])=>`<div class="callout ${c}">${esc(t)}</div>`).join('')
+      + (al.length>8?`<p class="muted" style="margin:8px 0 0">และอีก ${al.length-8} รายการ — ดูทั้งหมดในแท็บผลคัดกรอง</p>`:'')
+    : `<p class="muted" style="margin:0">${state.funds.length?'ไม่มีอะไรต้องดูตอนนี้':'ยังไม่มีกองทุน — เพิ่มในหน้าวางแผนลงทุน'}</p>`;
+
+  $('#homeDiv').innerHTML = divs.length
+    ? `<ul class="port-list">${divs.slice(0,8).map(x=>`<li><span class="sw" style="background:var(${x.d>=today?'--good':'--d7'})"></span><span class="nm">${esc(x.f.name.split(' —')[0])}${x.d>=today?' · จะจ่าย':''}</span><span class="pv">${x.v} ฿ · ${esc(x.d)}</span></li>`).join('')}</ul>`
+    : '<p class="muted" style="margin:0">ยังไม่มีประวัติปันผล — กองที่ถืออาจไม่จ่ายปันผล หรือข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บประวัติ</p>';
+
+  const fresh = res.map(r=>({r, d:(r.f.sec && (r.f.sec.portAsOf || r.f.sec.asOf)) || ''}))
+                   .filter(x=>x.d).sort((a,b)=>b.d.localeCompare(a.d));
+  $('#homeFresh').innerHTML = fresh.length
+    ? `<thead><tr><th>กองทุน</th><th>ข้อมูล ณ</th><th class="num">คะแนน</th><th></th></tr></thead><tbody>${
+      fresh.slice(0,8).map(x=>`<tr><td>${esc(x.r.f.name)}</td><td>${esc(x.d)}</td>
+        <td class="num">${x.r.e.total}</td>
+        <td>${x.r.f.sec.link && x.r.f.sec.link.url ? `<a class="btn small" href="${esc(x.r.f.sec.link.url)}" target="_blank" rel="noopener noreferrer">Fact Sheet ↗</a>` : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody>`
+    : '<tbody><tr><td class="muted">ยังไม่มีกองทุนที่ดึงข้อมูลจาก ก.ล.ต.</td></tr></tbody>';
+}
+
 /* ============ UI: พอร์ตของฉัน ============
    มูลค่าจริง = จำนวนหน่วยที่ผู้ใช้กรอก x ราคาต่อหน่วยล่าสุดจาก ก.ล.ต.
    กองที่ยังไม่มีราคา (ข้อมูลรอบเก่า) จะไม่ถูกนับรวม และบอกไว้ชัดๆ แทนที่จะเดาเป็น 0 */
 const priceOf = f => (f.sec && f.sec.price && f.sec.price.nav) || null;
-function renderHoldings(){
-  if (!$('#holdTable')) return;
-  const rows = state.funds.map(f=>{
+function holdingRows(){
+  return state.funds.map(f=>{
     const h = state.holdings[f.id] || {u:0, c:0};
     const nav = priceOf(f);
     const value = nav && h.u ? h.u*nav : null;
@@ -1004,6 +1058,10 @@ function renderHoldings(){
             pl: (value!=null && cost!=null) ? value-cost : null,
             noPrice: h.u>0 && !nav};
   });
+}
+function renderHoldings(){
+  if (!$('#holdTable')) return;
+  const rows = holdingRows();
   const held = rows.filter(r=>r.u>0);
   const totV = held.reduce((t,r)=>t+(r.value||0),0);
   const totC = held.reduce((t,r)=>t+(r.cost||0),0);
