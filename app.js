@@ -133,7 +133,7 @@ let state = load() || bindPlan(freshState());
    รับความเสี่ยงได้ไม่เท่ากัน) · คลัง funds ใช้ร่วมกันทุกแผน เพราะข้อมูลกองเป็นข้อเท็จจริงของกอง
    ไม่ขึ้นกับว่าใครวางแผนอะไร · เก็บซ้ำในแต่ละแผนแล้วจะอัปเดตไม่ตรงกัน */
 function freshPlan(name){
-  return {id:uid(), name: name || 'แผนหลัก', fundIds: [],
+  return {id:uid(), name: name || 'แผนหลัก', fundIds: [], startDate: '',
     profile:{goal:'wealth', years:10, riskTol:'6', lump:100000, monthly:5000, inflation:2, mode:'mix'},
     weights: Object.fromEntries(CRIT.map(c=>[c.k,c.w])), portfolio:{}};
 }
@@ -254,6 +254,7 @@ function sanitizePlan(raw, fundIds){
     : [...fundIds];
   return {
     id: cleanId(r.id), name: cleanStr(r.name,40) || 'แผนหลัก', fundIds: ids,
+    startDate: /^\d{4}-\d{2}-\d{2}$/.test(r.startDate) ? r.startDate : '',
     profile:{
       goal: cleanEnum(p.goal, ['wealth','retire','income','tax','short'], d.goal),
       years: cleanNum(p.years,1,50) || d.years,
@@ -1145,6 +1146,7 @@ let pfScopeId = '';                       // '' = พอร์ตรวมทุ
 function syncProfileInputs(){
   document.querySelectorAll('[data-p]').forEach(el=>{ el.value = state.profile[el.dataset.p]; });
   const nm = $('#planName'); if (nm) nm.value = activePlan().name;
+  const sd = $('#planStart'); if (sd) sd.value = activePlan().startDate || '';
 }
 function fillPlanSelects(){
   const opts = state.plans.map(pl=>`<option value="${esc(pl.id)}">${esc(pl.name)}</option>`).join('');
@@ -1172,6 +1174,9 @@ function planUI(){
   $('#planPick').addEventListener('change', e=>switchPlan(e.target.value));
   $('#planName').addEventListener('input', e=>{
     activePlan().name = cleanStr(e.target.value,40) || 'แผนไม่มีชื่อ'; save(); fillPlanSelects(); });
+  $('#planStart').addEventListener('change', e=>{
+    activePlan().startDate = /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) ? e.target.value : '';
+    save(); if ($('#section-home').classList.contains('active')) renderHome(); });
   $('#planNew').addEventListener('click', ()=>{
     const pl = freshPlan('แผนที่ ' + (state.plans.length+1));
     state.plans.push(pl); switchPlan(pl.id); });
@@ -1263,7 +1268,7 @@ function renderHome(){
       if (eq>0.2) al.push([0,'warn', `${r.pl.name} เหลือ ${r.years} ปี แต่มีสินทรัพย์เสี่ยง ${Math.round(eq*100)}% — ระยะสั้นไม่มีเวลารอให้ราคาฟื้น`]);
     });
     ov.runs.forEach(r=>{
-      if (r.onPlan == null || r.onPlan <= 0) return;
+      if (r.onPlan == null || r.onPlan <= 0 || r.matured) return;
       const gap = r.nowValue - r.onPlan;
       if (gap < -r.onPlan*0.1)
         al.push([1,'warn', `${r.pl.name} มีจริง ${fmtB(r.nowValue)} แต่ตามแผนควรมี ${fmtB(r.onPlan)} ณ ตอนนี้ — ตามหลังอยู่ ${fmtB(-gap)}`]);
@@ -1298,7 +1303,7 @@ function renderHome(){
 function renderOverview(){
   if (!$('#ovPlans')) return;
   const runs = allPlanRuns(), series = combinedSeries(runs);
-  const totMonthly = runs.reduce((t,r)=>t+r.monthly, 0);
+  const totMonthly = runs.filter(r=>!r.matured).reduce((t,r)=>t+r.monthly, 0);
   const totMoney = runs.reduce((t,r)=>t+r.money, 0);
   const endValue = runs.reduce((t,r)=>t + (r.rows ? r.rows[r.rows.length-1].value : 0), 0);
   const maxY = runs.length ? Math.max(...runs.map(r=>r.left)) : 1;
@@ -1311,19 +1316,22 @@ function renderOverview(){
     : 'ยังไม่มีแผนไหนจัดพอร์ต — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน';
 
   const order = [...runs].sort((a,b)=>a.left-b.left);
-  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th class="num">ปี</th><th class="num">เหลือ</th><th class="num">ต่อเดือน</th><th>ช่วงเวลา</th><th class="num">มีจริงตอนนี้</th><th class="num">เทียบกับแผน</th><th class="num">จะใส่อีก</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
+  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th class="num">ปี</th><th class="num">เหลือ</th><th class="num">ต่อเดือน</th><th>ช่วงเวลา</th><th class="num">มีจริงตอนนี้</th><th>เริ่ม → ครบ</th><th class="num">เทียบกับแผน</th><th class="num">จะใส่อีก</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
     order.map((r,i)=>{
       const diff = r.onPlan!=null ? r.nowValue - r.onPlan : null;
       return `<tr${r.pl.id===state.activePlan?' class="sel"':''}>
       <td><button type="button" class="linklike" data-goplan="${esc(r.pl.id)}">${esc(r.pl.name)}</button></td>
       <td class="num">${r.years}</td>
-      <td class="num">${r.started?r.left:'–'}</td>
+      <td class="num">${r.matured?'<span class="muted">ครบแล้ว</span>':r.future?'<span class="muted">ยังไม่เริ่ม</span>':r.started?r.left:'–'}</td>
       <td class="num">${r.monthly?fmtB(r.monthly):'–'}</td>
       <td><span class="bar-cell"><i style="width:${Math.round(r.left/maxY*100)}%;background:var(${DONUT[i%DONUT.length]})"></i></span></td>
-      <td class="num">${r.started?fmtB(r.nowValue):'<span class="muted">ยังไม่เริ่ม</span>'}</td>
+      <td class="num">${r.nowValue?fmtB(r.nowValue):'<span class="muted">ยังไม่ซื้อ</span>'}</td>
+      <td>${r.start?`<span class="muted" style="font-size:.8rem">${esc(r.start)} → ${esc(r.endDate)}</span>`:'<span class="muted" style="font-size:.8rem">ยังไม่กำหนด</span>'}</td>
       <td class="num" ${diff!=null?`style="color:var(${diff>=0?'--good':'--bad'})"`:''}>${diff!=null?`${diff>=0?'+':'−'}${fmtB(Math.abs(diff))}`:'–'}</td>
-      <td class="num">${fmtB(r.monthly*12*r.left)}</td>
-      <td class="num">${r.rows?fmtB(r.rows[r.rows.length-1].value):'<span class="muted">ยังไม่ได้จัดพอร์ต</span>'}</td></tr>`;
+      <td class="num">${r.matured?'<span class="muted">–</span>':fmtB(r.monthly*12*r.left)}</td>
+      <td class="num">${r.matured ? '<span class="muted">ครบกำหนดแล้ว</span>'
+        : r.rows ? fmtB(r.rows[r.rows.length-1].value)
+        : '<span class="muted">ยังไม่ได้จัดพอร์ต</span>'}</td></tr>`;
     }).join('')}</tbody>`;
   document.querySelectorAll('[data-goplan]').forEach(b=>b.addEventListener('click',()=>{
     switchPlan(b.dataset.goplan); showSection('plan'); }));
@@ -1491,14 +1499,23 @@ function planRun(pl){
   const held = holdingRows(pl.id);
   const nowValue = held.reduce((t,r)=>t+(r.value||0), 0);
   const nowCost  = held.reduce((t,r)=>t+(r.cost||0), 0);
+  // วันเริ่มที่ผู้ใช้กำหนดมาก่อน ถ้าไม่ได้กำหนดจึงเดาจากวันซื้อครั้งแรกที่ระบุวันที่ไว้
   const first = state.tx.filter(t=>t.planId===pl.id && t.date).map(t=>t.date).sort()[0];
-  const elapsed = first ? Math.max(0, (Date.now()-Date.parse(first))/(365.25*864e5)) : 0;
-  const started = nowValue > 0;
-  const left = started ? Math.max(1, Math.round(years - elapsed)) : years;
-  const rows = started ? (legs.length ? simulate({lump:nowValue, monthly, years:left, legs}) : null) : planned;
+  const start = pl.startDate || first || '';
+  const elapsedRaw = start ? (Date.now()-Date.parse(start))/(365.25*864e5) : 0;
+  const future = elapsedRaw < 0;                       // ตั้งวันเริ่มไว้ในอนาคต
+  const elapsed = Math.max(0, elapsedRaw);
+  const matured = start && elapsed >= years;           // ครบกำหนดไปแล้ว
+  const started = nowValue > 0 && !future;
+  const left = matured ? 0 : (started ? Math.max(1, Math.round(years - elapsed)) : years);
+  const rows = matured ? null
+             : started ? (legs.length ? simulate({lump:nowValue, monthly, years:left, legs}) : null)
+             : planned;
+  const endDate = start ? new Date(Date.parse(start) + years*365.25*864e5).toISOString().slice(0,10) : '';
   // มูลค่าที่แผนบอกว่า "ควรมี" ณ เวลาที่ผ่านมาแล้ว ใช้เทียบว่าตามแผนหรือไม่
   const onPlan = planned && started ? (planned[Math.min(Math.round(elapsed), years)] || planned[0]).value : null;
   return {pl, legs, years, left, lump, monthly, planned, rows, nowValue, nowCost, elapsed, started, onPlan,
+          start, endDate, future, matured,
           gainSoFar: started ? nowValue - nowCost : 0,
           money: started ? nowCost + monthly*12*left : lump + monthly*12*years};
 }
