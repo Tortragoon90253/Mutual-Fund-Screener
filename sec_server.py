@@ -154,10 +154,12 @@ DATASETS = {
     "periods": ("/v2/fund/factsheet/subscription-redemption-periods", True, True),
     "mins":    ("/v2/fund/factsheet/subscription-redemption-minimums", True, True),
     "top5":    ("/v2/fund/factsheet/top5-holdings", False, True),
+    "alloc":   ("/v2/fund/factsheet/asset-allocation", False, True),
 }
 DATASET_LABELS = {"specs": "ประเภทพิเศษ", "risk": "ระดับความเสี่ยง", "stats": "ข้อมูลสถิติ", "fees": "ค่าธรรมเนียม",
                   "genfees": "ค่าธรรมเนียมตามโครงการ", "perf": "ผลการดำเนินงาน", "div": "นโยบายปันผล",
-                  "periods": "ระยะเวลาซื้อขาย", "mins": "มูลค่าซื้อขั้นต่ำ", "top5": "5 อันดับแรก", "nav": "NAV"}
+                  "periods": "ระยะเวลาซื้อขาย", "mins": "มูลค่าซื้อขั้นต่ำ", "top5": "5 อันดับแรก",
+                  "alloc": "สัดส่วนประเภททรัพย์สิน", "nav": "NAV"}
 
 
 def pick(rows, cls, class_level=True, dated=True):
@@ -180,6 +182,20 @@ def safe(fn, notes, label):
     except Exception as e:  # malformed payloads should not kill the whole import
         notes.append(f"อ่าน{label}ไม่สำเร็จ ({type(e).__name__})")
     return []
+
+
+def holding_rows(rows, by_ratio=False):
+    """Fact-sheet rows carrying asset_name/asset_ratio -> [[name, %NAV], ...] for the portfolio chart.
+    by_ratio sorts biggest slice first (asset allocation); otherwise the reported rank order is kept."""
+    out = []
+    for r in sorted(rows, key=lambda r: to_num(r.get("asset_seq")) or 0):
+        name = re.sub(r"\s+", " ", str(r.get("asset_name") or "")).strip()
+        ratio = to_num(r.get("asset_ratio"))
+        if name and ratio is not None and ratio > 0:
+            out.append([name[:80], round(ratio, 2)])
+    if by_ratio:
+        out.sort(key=lambda x: -x[1])
+    return out[:20]
 
 
 def years_of(period):
@@ -340,6 +356,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     risk, stats_rows, fee_rows = get("risk"), get("stats"), get("fees")
     gen_fee_rows = get("genfees")
     perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
+    alloc_rows = get("alloc")
     nav_rows = pick(raw.get("nav") or [], cls, True, False)
     today = date.today()
 
@@ -396,8 +413,12 @@ def assemble_fund(profile, cls, raw, notes=None):
               "ret1": "ผลตอบแทน 1 ปี", "ret5": "ผลตอบแทน 5 ปี", "aum": "ขนาดกอง", "settle": "T+ รับเงินคืน"}
     missing = [label for k, label in labels.items() if fund.get(k) in ("", None)]
     asof = max([r.get("start_date") or "" for r in stats_rows + fee_rows + perf_rows + risk] or [""])
+    port_asof = max([r.get("start_date") or "" for r in list(alloc_rows) + list(top5)] or [""])
     fund["sec"] = {"projId": proj_id, "cls": cls, "asOf": asof, "fetched": today.isoformat(),
-                   "notes": notes, "missing": missing}
+                   "notes": notes, "missing": missing,
+                   "alloc": holding_rows(alloc_rows, by_ratio=True),  # ประเภททรัพย์สิน -> donut
+                   "top5": holding_rows(top5),                        # 5 อันดับแรก, เรียงตามอันดับที่รายงาน
+                   "portAsOf": port_asof}
     return fund
 
 

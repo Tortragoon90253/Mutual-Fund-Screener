@@ -8,6 +8,7 @@ const ASSET = {
   bond:{label:'ตราสารหนี้', exp:3, sd:5, equity:false},
   money_market:{label:'ตลาดเงิน', exp:1.5, sd:1, equity:false}
 };
+const DONUT = ['--d1','--d2','--d3','--d4','--d5','--d6','--d7'];  // สีของ donut พอร์ตกองทุน
 const REGION = {TH:'ไทย', US:'สหรัฐฯ', GLOBAL:'ทั่วโลก', EU:'ยุโรป', ASIA:'เอเชีย', CN:'จีน', JP:'ญี่ปุ่น', EM:'ตลาดเกิดใหม่', OTHER:'อื่นๆ'};
 const HEDGE = {full:'ป้องกันเต็มจำนวน', partial:'ป้องกันบางส่วน', discretion:'ตามดุลพินิจผู้จัดการ', none:'ไม่ป้องกัน', na:'ไม่ทราบ'};
 const TAX = {none:'ไม่ใช่กองลดหย่อน', SSF:'SSF', RMF:'RMF', ThaiESG:'Thai ESG'};
@@ -116,7 +117,12 @@ function sanitizeFund(f){
   out.sample = f.sample===true;
   if (f.sec && typeof f.sec==='object'){
     const s = f.sec, list = a => Array.isArray(a) ? a.slice(0,30).map(x=>cleanStr(x,300)).filter(Boolean) : [];
-    out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing)};
+    // [[ชื่อทรัพย์สิน, %NAV], ...] from the SEC fact sheet — drawn as the portfolio donut
+    const slices = a => Array.isArray(a) ? a.slice(0,20)
+      .map(x=>Array.isArray(x) ? [cleanStr(x[0],80), cleanNum(x[1],0,100)] : null)
+      .filter(x=>x && x[0] && x[1] !== '' && x[1] > 0) : [];
+    out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing),
+               alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20)};
     if (!out.sec.projId) delete out.sec;
   }
   return out;
@@ -183,8 +189,12 @@ function evaluate(f, p){
     else if (h>=10){ s=60; r.push(R('warn',`ถือเพียง ${h} ตัว`)); }
     else { s=40; r.push(R('bad',`ถือเพียง ${h} ตัว กระจุกตัวมาก`)); }
     if (has(f.top5)){
+      // ตลาดเงิน/ตราสารหนี้ถือตราสารระยะสั้นคุณภาพสูงไม่กี่ตัวเป็นเรื่องปกติ —
+      // ความเสี่ยงอยู่ที่คุณภาพผู้ออกตราสาร ไม่ใช่จำนวนตัว จึงใช้เพดานคนละระดับกับกองที่ถือหุ้น
+      const lim = a.equity ? 35 : 70;
       if (f.feeder && num(f.top5)>80) r.push(R('warn',`5 อันดับแรก ${f.top5}% คือกองหลัก — ดูความกระจุกตัวจาก Fact Sheet ของกองหลัก`));
-      else if (num(f.top5)>35){ s-=30; r.push(R('warn',`5 อันดับแรกรวม ${f.top5}% — กระจุกตัวสูง`)); }
+      else if (num(f.top5)>lim){ s-=30; r.push(R('warn',`5 อันดับแรกรวม ${f.top5}% — กระจุกตัวสูง`)); }
+      else if (!a.equity && num(f.top5)>35) r.push(R('good',`5 อันดับแรกรวม ${f.top5}% — ปกติสำหรับ${a.label} สิ่งที่ต้องดูคือคุณภาพผู้ออกตราสาร`));
       else r.push(R('good',`5 อันดับแรกรวม ${f.top5}%`)); }
     if (f.feeder){ if (!f.master){ s-=10; r.push(R('warn','เป็น Feeder Fund แต่ไม่ได้ระบุกองหลัก')); } else r.push(R('good',`Feeder Fund ลงทุนผ่าน ${f.master}`)); }
     C('c2', s, r); }
@@ -371,6 +381,51 @@ function saveFund(){
   else state.funds.push({...f, id:uid(), sample:false});
   save(); fillForm(null); renderFunds();
 }
+/* ---- พอร์ตกองทุนจาก Fact Sheet (ก.ล.ต.) ----
+   alloc = สัดส่วนประเภททรัพย์สิน (%NAV) -> donut · top5 = ทรัพย์สิน 5 อันดับแรก -> รายการ */
+function portBlock(f){
+  const s = f.sec; if (!s) return '';
+  const alloc = s.alloc || [], top5 = s.top5 || [];
+  if (!alloc.length && !top5.length) return '';
+  const asOf = s.portAsOf || s.asOf;
+  const row = (x, i) => `<li>${i===null?'':`<span class="sw" style="background:var(${DONUT[i%DONUT.length]})"></span>`}`
+    + `<span class="nm" title="${esc(x[0])}">${esc(x[0])}</span><span class="pv">${x[1].toFixed(2)}%</span></li>`;
+  const total = alloc.reduce((t,x)=>t+x[1], 0);
+  const parts = [];
+  if (alloc.length) parts.push(`<h5>สัดส่วนประเภททรัพย์สิน (%NAV)</h5><ul class="port-list">${alloc.map(row).join('')}</ul>`);
+  if (top5.length) parts.push(`<h5>ทรัพย์สิน 5 อันดับแรก</h5><ul class="port-list">${top5.map(x=>row(x,null)).join('')}</ul>`);
+  if (alloc.length && Math.abs(total-100) >= 0.5)
+    parts.push(`<p class="meta" style="margin:6px 0 0">รวมที่แฟกต์ชีตระบุ ${total.toFixed(2)}% ของ NAV — ส่วนที่เหลือไม่ได้แจกแจงไว้</p>`);
+  if (f.feeder)
+    parts.push(`<p class="meta" style="margin:6px 0 0">เป็น Feeder Fund — สัดส่วนนี้คือการถือหน่วยของกองหลัก ไม่ใช่ทรัพย์สินที่กองหลักลงทุนจริง</p>`);
+  return `<details class="port" data-port="${esc(f.id)}">
+      <summary>พอร์ตกองนี้${asOf?` · ณ ${esc(asOf)}`:''}</summary>
+      <div class="port-body">
+        ${alloc.length?`<div class="port-chart"><canvas id="port_${esc(f.id)}"></canvas></div>`:''}
+        <div class="port-side">${parts.join('')}</div>
+      </div></details>`;
+}
+function drawPort(id){
+  const f = state.funds.find(x=>x.id===id);
+  const rows = f && f.sec && f.sec.alloc;
+  if (!rows || !rows.length || !document.getElementById('port_'+id)) return;
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.color = css('--muted');
+  draw('port_'+id, {
+    type:'doughnut',
+    data:{labels: rows.map(x=>x[0]), datasets:[{
+      data: rows.map(x=>x[1]),
+      backgroundColor: rows.map((_,i)=>css(DONUT[i%DONUT.length])),
+      borderColor: css('--surface-2'), borderWidth:2}]},
+    options:{responsive:true, maintainAspectRatio:false, cutout:'58%',
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=>` ${c.label}: ${c.parsed.toFixed(2)}%`}}}}
+  });
+}
+// Chart.js bakes the palette in when the chart is built, so a theme flip needs a redraw
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ()=>
+  document.querySelectorAll('#fundList details.port[open]').forEach(d=>drawPort(d.dataset.port)));
+
 function renderFunds(){
   $('#fundCount').textContent = state.funds.length;
   $('#fundList').innerHTML = state.funds.length ? state.funds.map(f=>{
@@ -381,8 +436,12 @@ function renderFunds(){
       ${f.sec?`<div class="meta">Fact Sheet ${esc(f.sec.asOf||'-')} · ดึงเมื่อ ${esc(f.sec.fetched)}</div>
         ${f.sec.missing?.length?`<div class="meta" style="color:var(--warn)">ต้องกรอกเอง: ${esc(f.sec.missing.join(', '))}</div>`:''}
         ${f.sec.notes?.length?`<ul class="reasons">${f.sec.notes.map(n=>`<li class="warn">${esc(n)}</li>`).join('')}</ul>`:''}`:''}
+      ${portBlock(f)}
       <div class="row" style="margin-top:8px"><button class="btn small" data-edit="${esc(f.id)}">แก้ไข</button>${f.sec&&secReady?`<button class="btn small" data-refresh="${esc(f.id)}">อัปเดตจาก ก.ล.ต.</button>`:''}<button class="btn small danger" data-del="${esc(f.id)}">ลบ</button></div>
     </div>`; }).join('') : '<p class="muted">ยังไม่มีกองทุน — กรอกฟอร์มด้านบน หรือกด "โหลดกองตัวอย่าง"</p>';
+  // a canvas inside a closed <details> has no size, so the donut is drawn the first time it opens
+  $('#fundList').querySelectorAll('details.port').forEach(d=>
+    d.addEventListener('toggle', ()=>{ if (d.open) drawPort(d.dataset.port); }));
 }
 /* ============ SEC Open API data ============
    Two sources, tried in order:
