@@ -1217,6 +1217,7 @@ function renderHome(){
   state.plans.forEach(pl=>planFunds(pl).forEach(f=>res.push({f, pl, e:evaluate(f, pl.profile, pl.weights)})));
   const uniqueFunds = new Set(res.map(r=>r.f.id)).size;
   const many = state.plans.length>1;
+  const ov = renderOverview() || {runs:[], totMonthly:0, totMoney:0, endValue:0, byFund:{}, placed:0};
   const rows = holdingRows(), held = rows;   // หน้าแรกดูรวมทุกแผน
   const totV = held.reduce((t,r)=>t+(r.value||0),0);
   const totC = held.reduce((t,r)=>t+(r.cost||0),0);
@@ -1231,7 +1232,9 @@ function renderHome(){
     ['มูลค่าพอร์ต', totV?fmtB(totV):'—', totV&&totC?`${totV>=totC?'+':'−'}${fmtB(Math.abs(totV-totC))} (${pct((totV-totC)/totC*100,2)})`:'กรอกจำนวนหน่วยในหน้าพอร์ต'],
     ['กองที่ติดตาม', String(uniqueFunds), res.filter(r=>!r.e.pass).length?`ไม่ผ่านเกณฑ์ ${res.filter(r=>!r.e.pass).length} รายการ`:'ผ่านเกณฑ์ทุกกอง'],
     ['คะแนนเฉลี่ย', avg!=null?String(avg):'—', avg!=null?'ตามโปรไฟล์ปัจจุบัน':''],
-    ['ปันผลที่จะถึง', upcoming.length?String(upcoming.length):'—', upcoming.length?`รายการถัดไป ${upcoming.at(-1).d}`:'ไม่มีรายการที่ประกาศไว้']
+    ['ปันผลที่จะถึง', upcoming.length?String(upcoming.length):'—', upcoming.length?`รายการถัดไป ${upcoming.at(-1).d}`:'ไม่มีรายการที่ประกาศไว้'],
+    ['ลงทุนต่อเดือนรวม', ov.totMonthly?fmtB(ov.totMonthly):'—', `${state.plans.length} แผน`],
+    ['มูลค่าคาดการณ์รวม', ov.endValue?fmtB(ov.endValue):'—', ov.totMoney?`จะใส่ทั้งหมด ${fmtB(ov.totMoney)}`:'ยังไม่ได้จัดพอร์ต']
   ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
 
   // ต้องดู: ข้อที่ตกเกณฑ์ก่อน แล้วค่อยคำเตือนระดับ bad แล้วจึงขาดทุนจริง
@@ -1244,6 +1247,25 @@ function renderHome(){
   held.filter(r=>r.pl!=null && r.pl<0).forEach(r=>
     al.push([2,'warn',`${r.f.name.split(' —')[0]}: ขาดทุน ${fmtB(Math.abs(r.pl))} (${pct(r.pl/r.cost*100,1)})`]));
   rows.filter(r=>r.noPrice).length && al.push([3,'', `${rows.filter(r=>r.noPrice).length} กองยังไม่มีราคาต่อหน่วย — กด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
+
+  // สิ่งที่มองไม่เห็นตอนดูทีละแผน — ต้องรวมทุกแผนถึงจะเห็น
+  if (ov.placed){
+    Object.entries(ov.byFund).forEach(([id, money])=>{
+      const share = money/ov.placed;
+      const inPlans = ov.runs.filter(r=>r.legs.some(L=>L.id===id)).length;
+      const f = state.funds.find(x=>x.id===id);
+      if (f && share>0.25 && inPlans>1)
+        al.push([0,'warn', `${f.name.split(' —')[0]} รวมทุกแผนคิดเป็น ${Math.round(share*100)}% ของเงินที่วางแผนไว้ (อยู่ใน ${inPlans} แผน) — แผนละนิดละหน่อยแต่รวมแล้วกระจุกที่กองเดียว`]);
+    });
+    ov.runs.forEach(r=>{
+      if (!r.legs.length || r.years>5) return;
+      const eq = r.legs.filter(L=>(ASSET[L.assetClass]||{}).equity).reduce((t,L)=>t+L.w,0);
+      if (eq>0.2) al.push([0,'warn', `${r.pl.name} เหลือ ${r.years} ปี แต่มีสินทรัพย์เสี่ยง ${Math.round(eq*100)}% — ระยะสั้นไม่มีเวลารอให้ราคาฟื้น`]);
+    });
+    const ends = ov.runs.filter(r=>r.rows && r.monthly>0).sort((a,b)=>a.years-b.years)[0];
+    if (ends && ov.runs.length>1 && ov.totMonthly>ends.monthly)
+      al.push([4,'', `ต้องใส่เงินรวม ${fmtB(ov.totMonthly)}/เดือน ไปอีก ${ends.years} ปี แล้วลดเหลือ ${fmtB(ov.totMonthly-ends.monthly)} เมื่อแผน "${ends.pl.name}" ครบกำหนด`]);
+  }
   al.sort((a,b)=>a[0]-b[0]);
   $('#homeAlerts').innerHTML = al.length
     ? al.slice(0,8).map(([,c,t])=>`<div class="callout ${c}">${esc(t)}</div>`).join('')
@@ -1264,6 +1286,65 @@ function renderHome(){
         <td class="num">${x.r.e.total}</td>
         <td>${x.r.f.sec.link && x.r.f.sec.link.url ? `<a class="btn small" href="${esc(x.r.f.sec.link.url)}" target="_blank" rel="noopener noreferrer">Fact Sheet ↗</a>` : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody>`
     : '<tbody><tr><td class="muted">ยังไม่มีกองทุนที่ดึงข้อมูลจาก ก.ล.ต.</td></tr></tbody>';
+}
+
+/* ---- ภาพรวมแผนทั้งหมด (อยู่ในหน้าแรก) ---- */
+function renderOverview(){
+  if (!$('#ovPlans')) return;
+  const runs = allPlanRuns(), series = combinedSeries(runs);
+  const totMonthly = runs.reduce((t,r)=>t+r.monthly, 0);
+  const totMoney = runs.reduce((t,r)=>t+r.money, 0);
+  const endValue = runs.reduce((t,r)=>t + (r.rows ? r.rows[r.rows.length-1].value : 0), 0);
+  const maxY = runs.length ? Math.max(...runs.map(r=>r.years)) : 1;
+
+  $('#ovSub').textContent = series
+    ? `กรณีกลาง หลังหักค่าธรรมเนียม · ${runs.filter(r=>r.rows).length} แผนที่จัดพอร์ตแล้ว จาก ${runs.length} แผน`
+    : 'ยังไม่มีแผนไหนจัดพอร์ต — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน';
+
+  const order = [...runs].sort((a,b)=>a.years-b.years);
+  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th class="num">ปี</th><th class="num">เสี่ยง</th><th class="num">ต่อเดือน</th><th class="num">กอง</th><th>ช่วงเวลา</th><th class="num">จะใส่รวม</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
+    order.map((r,i)=>`<tr${r.pl.id===state.activePlan?' class="sel"':''}>
+      <td><button type="button" class="linklike" data-goplan="${esc(r.pl.id)}">${esc(r.pl.name)}</button></td>
+      <td class="num">${r.years}</td>
+      <td class="num">${esc(r.pl.profile.riskTol)}</td>
+      <td class="num">${r.monthly?fmtB(r.monthly):'–'}</td>
+      <td class="num">${r.pl.fundIds.length}</td>
+      <td><span class="bar-cell"><i style="width:${Math.round(r.years/maxY*100)}%;background:var(${DONUT[i%DONUT.length]})"></i></span></td>
+      <td class="num">${fmtB(r.money)}</td>
+      <td class="num">${r.rows?fmtB(r.rows[r.rows.length-1].value):'<span class="muted">ยังไม่ได้จัดพอร์ต</span>'}</td></tr>`).join('')}</tbody>`;
+  document.querySelectorAll('[data-goplan]').forEach(b=>b.addEventListener('click',()=>{
+    switchPlan(b.dataset.goplan); showSection('plan'); }));
+
+  // สัดส่วนสินทรัพย์รวม ถ่วงน้ำหนักด้วยเงินที่แต่ละแผนจะใส่จนครบ
+  const byClass = {}, byFund = {};
+  runs.forEach(r=>r.legs.forEach(L=>{
+    byClass[L.assetClass] = (byClass[L.assetClass]||0) + L.w*r.money;
+    byFund[L.id] = (byFund[L.id]||0) + L.w*r.money;
+  }));
+  const placed = Object.values(byClass).reduce((t,v)=>t+v, 0);
+  const slices = Object.entries(byClass).sort((a,b)=>b[1]-a[1])
+    .map(([k,v])=>[(ASSET[k]||ASSET.mixed).label, +(v/placed*100).toFixed(2)]);
+  $('#ovAllocLegend').innerHTML = slices.map((x,i)=>`<li><span class="sw" style="background:var(${DONUT[i%DONUT.length]})"></span><span class="nm">${esc(x[0])}</span><span class="pv">${x[1].toFixed(1)}%</span></li>`).join('')
+    || '<li class="muted">ยังไม่มีแผนไหนจัดพอร์ต</li>';
+  drawDonut('ovAlloc', slices);
+
+  if (series){
+    const C = {line:css('--accent'), put:css('--c-principal'), grid:css('--grid')};
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+    Chart.defaults.color = css('--muted');
+    draw('ovChart', {type:'line',
+      data:{labels: series.map(r=>r.year), datasets:[
+        {label:'มูลค่าคาดการณ์', data:series.map(r=>r.value), borderColor:C.line, backgroundColor:C.line+'22',
+         fill:true, tension:.25, pointRadius:0, borderWidth:2.4},
+        {label:'เงินที่ใส่ไปสะสม', data:series.map(r=>r.principal), borderColor:C.put, borderDash:[5,4],
+         fill:false, tension:0, pointRadius:0, borderWidth:2}]},
+      options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
+        scales:{x:{title:{display:true,text:'ปีที่'},grid:{color:C.grid}},
+                y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
+        plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
+  } else if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; }
+
+  return {runs, series, totMonthly, totMoney, endValue, byFund, placed};
 }
 
 /* ============ UI: พอร์ตของฉัน ============
@@ -1373,12 +1454,37 @@ const charts = {};
 $('#modeSeg').addEventListener('click', e=>{ const m=e.target.dataset.mode; if(m){ state.profile.mode=m; save(); renderPlan(); } });
 $('#showReal').addEventListener('change', e=>{ state.showReal=e.target.checked; save(); renderPlan(); });
 
-function portfolioLegs(){
-  const ids = Object.keys(state.portfolio).filter(id=>state.funds.some(f=>f.id===id));
-  const tot = ids.reduce((t,id)=>t+num(state.portfolio[id]),0);
+function portfolioLegs(pl){
+  const plan = pl || activePlan(), pf = plan.portfolio;
+  const ids = Object.keys(pf).filter(id=>state.funds.some(f=>f.id===id));
+  const tot = ids.reduce((t,id)=>t+num(pf[id]),0);
   if (!ids.length || tot<=0) return [];
-  return ids.map(id=>{ const f=state.funds.find(x=>x.id===id); return {...fundAssumptions(f), w:num(state.portfolio[id])/tot, name:f.name}; })
+  return ids.map(id=>{ const f=state.funds.find(x=>x.id===id);
+                       return {...fundAssumptions(f), w:num(pf[id])/tot, name:f.name, id, assetClass:f.assetClass}; })
             .filter(L=>L.w>0);
+}
+/* ---- ภาพรวมทุกแผน ----
+   ใช้ simulate() ตัวเดียวกับแท็บคาดการณ์ รันทีละแผนด้วยโปรไฟล์ของแผนนั้น แล้วบวกตามแกนเวลา
+   แผนที่ครบกำหนดก่อนจะคงมูลค่าไว้ตั้งแต่ปีนั้น (ถือว่าถอนออกไปใช้ตามเป้าหมายแล้ว) */
+function planRun(pl){
+  const p = pl.profile, legs = portfolioLegs(pl);
+  const years = Math.max(1, Math.round(num(p.years,1)));
+  const lump = p.mode==='dca' ? 0 : num(p.lump);
+  const monthly = p.mode==='lump' ? 0 : num(p.monthly);
+  return {pl, legs, years, lump, monthly, money: lump + monthly*12*years,
+          rows: legs.length ? simulate({lump, monthly, years, legs}) : null};
+}
+function allPlanRuns(){ return state.plans.map(planRun); }
+function combinedSeries(runs){
+  const live = runs.filter(r=>r.rows);
+  if (!live.length) return null;
+  const maxY = Math.max(...live.map(r=>r.years));
+  const at = (r, y) => r.rows[Math.min(y, r.years)] || r.rows[r.rows.length-1];
+  return Array.from({length: maxY+1}, (_,y)=>({
+    year: y,
+    value: live.reduce((t,r)=>t + at(r,y).value, 0),
+    principal: live.reduce((t,r)=>t + at(r,y).principal, 0)
+  }));
 }
 function renderPlan(){
   const p = state.profile;
