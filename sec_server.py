@@ -219,6 +219,28 @@ def stats_extra(stats):
     return out
 
 
+def fund_aum(rows):
+    """Net assets of the whole fund in millions of baht, summed over its share classes.
+
+    SEC files NAV per share class and many classes never file one, so reading only the class's
+    own row left 409 funds answering differently depending on which class you opened, and just
+    49% of classes with any size at all. Fund size is what says whether a fund is too small to
+    survive, which is a property of the fund, so the newest row of every class is added up.
+    Verified per class, not per fund: all 460 multi-class funds that report more than one class
+    report a different figure for each."""
+    latest = {}
+    for r in rows:
+        v = to_num(r.get("net_asset"))
+        if v is None:
+            continue
+        cls = (r.get("fund_class_name") or "").strip().lower()
+        d = r.get("nav_date") or ""
+        if cls not in latest or d > latest[cls][0]:
+            latest[cls] = (d, v)
+    total = sum(v for _, v in latest.values())
+    return round(total / 1e6, 1) if total > 0 else ""
+
+
 def sharpe_of(stats):
     """Sharpe as a number, or "" when the sheet is really saying "not computed".
     Nine funds report 999.99 and a few report tens; left in, those take the top score outright
@@ -423,7 +445,6 @@ def assemble_fund(profile, cls, raw, notes=None):
     perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
     alloc_rows = get("alloc")
     sd_by, cal, cal_bm = perf_extra(perf_rows)
-    nav_rows = pick(raw.get("nav") or [], cls, True, False)
     today = date.today()
 
     stats = stats_rows[0] if stats_rows else {}
@@ -465,9 +486,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         v = to_num(min_rows[0].get("minimum_sub"))
         if v is not None and "THB" in str(min_rows[0].get("minimum_sub_cur") or "THB").upper():
             fund["minBuy"] = v
-    navs = sorted(nav_rows, key=lambda n: n.get("nav_date") or "")
-    if navs and to_num(navs[-1].get("net_asset")):
-        fund["aum"] = round(to_num(navs[-1]["net_asset"]) / 1e6, 1)
+    fund["aum"] = fund_aum(raw.get("nav") or [])
 
     if fund["feeder"] and isinstance(fund["top5"], float) and fund["top5"] > 80:
         notes.append("5 อันดับแรกคือกองหลัก — ความกระจุกตัวจริงต้องดูจาก Fact Sheet ของกองหลัก")

@@ -8,6 +8,22 @@ const ASSET = {
   bond:{label:'ตราสารหนี้', exp:3, sd:5, equity:false},
   money_market:{label:'ตลาดเงิน', exp:1.5, sd:1, equity:false}
 };
+/* ชนะตัวเทียบกี่ปีจากกี่ปีปฏิทิน — วัดความสม่ำเสมอได้ตรงกว่าตัวเลขย้อนหลัง 5 ปีตัวเดียว
+   เพราะกองที่แพ้ 4 ปีแล้วมาชนะปีเดียวแรงๆ ให้ค่าเฉลี่ย 5 ปีเท่ากับกองที่ชนะสม่ำเสมอได้
+   ตัวเทียบใช้ดัชนีชี้วัดของปีนั้นก่อน ไม่มีจึงใช้ค่าเฉลี่ยกลุ่ม */
+const BAT_MIN_YEARS = 3;
+function battingAvg(f){
+  const sec = f.sec; if (!sec) return null;
+  const cal = sec.cal || {}, bm = sec.calBm || {}, peer = {};
+  (sec.peer || []).forEach(p=>{ if (/^20\d\d$/.test(p[1])) peer[p[1]] = p[2]; });
+  let years = 0, wins = 0;
+  Object.keys(cal).forEach(y=>{
+    const ref = bm[y] !== undefined ? bm[y] : peer[y];
+    if (ref === undefined) return;
+    years++; if (cal[y] >= ref) wins++;
+  });
+  return years >= BAT_MIN_YEARS ? {years, wins} : null;
+}
 /* จุดตัด TER แยกตามประเภทสินทรัพย์ [p10, p25, p50, p75, p90, จำนวนกอง]
    ใช้เมื่อยังไม่ได้โหลด data/index.json (ซึ่งมีค่าที่คำนวณสดทุกรอบ build)
    คำนวณจากข้อมูล ก.ล.ต. 4,923 ชนิดหน่วยลงทุน (ก.ย. 2026) */
@@ -151,12 +167,20 @@ function sanitizeFund(f){
     const slices = a => Array.isArray(a) ? a.slice(0,20)
       .map(x=>Array.isArray(x) ? [cleanStr(x[0],80), cleanNum(x[1],0,100)] : null)
       .filter(x=>x && x[0] && x[1] !== '' && x[1] > 0) : [];
+    const years = o => { const out={};
+      if (o && typeof o==='object') Object.entries(o).slice(0,20).forEach(([k,v])=>{
+        if (/^20\d\d$/.test(k) && cleanNum(v,-100,1000)!=='') out[k]=cleanNum(v,-100,1000); });
+      return out; };
+    const peerRows = a => Array.isArray(a) ? a.slice(0,40)
+      .map(x=>Array.isArray(x) ? [cleanStr(x[0],80), cleanStr(x[1],20), cleanNum(x[2],-100,1000)] : null)
+      .filter(x=>x && x[1] && x[2]!=='') : [];
     const stats = o => { const out={};
       if (o && typeof o==='object') Object.entries(o).slice(0,12).forEach(([k,v])=>{
         if (/^[a-z_]{1,40}$/.test(k) && v!=='' && v!=null) out[k]=cleanStr(v,40); });
       return out; };
     out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing),
-               alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20), stats:stats(s.stats)};
+               alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20), stats:stats(s.stats),
+               cal:years(s.cal), calBm:years(s.calBm), peer:peerRows(s.peer)};
     if (!out.sec.projId) delete out.sec;
   }
   return out;
@@ -269,17 +293,23 @@ function evaluate(f, p){
   // 5 past performance
   { const r=[]; const per=[['ret1','bm1','1 ปี'],['ret3','bm3','3 ปี'],['ret5','bm5','5 ปี']].filter(([x,y])=>has(f[x])&&has(f[y]));
     let s;
-    if (!per.length){ s=50; r.push(R('warn','ไม่มีข้อมูลผลตอบแทนเทียบดัชนีชี้วัด')); }
-    else { let wins=0; per.forEach(([x,y,l])=>{ const d=num(f[x])-num(f[y]); if(d>=0) wins++; r.push(R(d>=0?'good':'warn',`${l}: กอง ${pct(num(f[x]),2)} vs ดัชนี ${pct(num(f[y]),2)} (${d>=0?'ชนะ':'แพ้'} ${Math.abs(d).toFixed(2)}%)`)); });
-      s = 40 + 60*wins/per.length;
-      if (!has(f.ret5)) { s-=10; r.push(R('warn','ไม่มีผลตอบแทน 5 ปี — ประวัติสั้นเกินกว่าจะสรุปได้')); } }
+    const bat = battingAvg(f);
+    per.forEach(([x,y,l])=>{ const d=num(f[x])-num(f[y]);
+      r.push(R(d>=0?'good':'warn',`${l}: กอง ${pct(num(f[x]),2)} vs ดัชนี ${pct(num(f[y]),2)} (${d>=0?'ชนะ':'แพ้'} ${Math.abs(d).toFixed(2)}%)`)); });
+    if (bat){   // อัตราชนะรายปีวัดเรื่องเดียวกันแต่ละเอียดกว่า จึงใช้แทนเมื่อมีข้อมูลพอ
+      s = 30 + 70*bat.wins/bat.years;
+      r.push(R(bat.wins/bat.years>=0.6?'good':bat.wins/bat.years>=0.4?'warn':'bad',
+        `ชนะตัวเทียบ ${bat.wins} จาก ${bat.years} ปีปฏิทิน`)); }
+    else if (!per.length){ s=50; r.push(R('warn','ไม่มีข้อมูลผลตอบแทนเทียบดัชนีชี้วัด')); }
+    else { s = 40 + 60*per.filter(([x,y])=>num(f[x])>=num(f[y])).length/per.length; }
+    if (per.length && !has(f.ret5)) { s-=10; r.push(R('warn','ไม่มีผลตอบแทน 5 ปี — ประวัติสั้นเกินกว่าจะสรุปได้')); }
     // ผลตอบแทนต้องดูคู่กับความเสี่ยงที่จ่ายไป และต้องเทียบในกลุ่มเดียวกัน เพราะ Sharpe
     // ของกองตราสารหนี้กับกองหุ้นอยู่คนละสเกล · ดัชนีชี้วัด 5 ปีมีแค่ 36% ของกอง แต่ Sharpe มี 61%
     const sbr = sharpeBreaks(f.assetClass);
     if (has(f.sharpe) && sbr){
       const rk = pctRank(num(f.sharpe), sbr);
-      if (!per.length) s = Math.round(35 + 0.6*rk);            // ไม่มีดัชนีให้เทียบ -> ใช้ตัวนี้แทนการเดา 50
-      else s = clamp(s + Math.round((rk-50)*0.3), 0, 100);     // มีดัชนีอยู่แล้ว -> ปรับได้ ±15
+      if (!per.length && !bat) s = Math.round(35 + 0.6*rk);   // ไม่มีอะไรให้เทียบเลย -> ใช้ตัวนี้แทนการเดา 50
+      else s = clamp(s + Math.round((rk-50)*0.3), 0, 100);     // มีฐานอยู่แล้ว -> ปรับได้ ±15
       r.push(R(rk>=60?'good':rk>=30?'warn':'bad',
         `Sharpe ${num(f.sharpe)} — ดีกว่า ${Math.round(rk)}% ของกองประเภทเดียวกัน (${a.label} ${sbr[5].toLocaleString()} กอง)`)); }
     if (has(f.ret1) && has(f.ret5) && num(f.ret1)>20 && num(f.ret1)>2*num(f.ret5)) r.push(R('warn','ผลตอบแทนปีล่าสุดสูงกว่าค่าเฉลี่ยระยะยาวมาก — ระวังการซื้อตามกระแส'));
