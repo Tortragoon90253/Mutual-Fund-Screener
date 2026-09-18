@@ -266,9 +266,20 @@ def benchmarks_of(rows):
     return out[:4]
 
 
-def dividend_stats(rows, nav):
+def dividend_stats(rows, nav, cls, pays_dividend):
     """ปันผลย้อนหลัง: รายการล่าสุด และอัตราผลตอบแทนปันผล 12 เดือนล่าสุดเทียบราคาต่อหน่วย.
-    ก.ล.ต. ไม่มีพารามิเตอร์กรองวันที่ จึงต้องตัดเองหลังดึงมา และเก็บแค่ 3 ปีล่าสุด"""
+
+    ประวัติปันผลมาเป็นระดับ "กอง" ไม่ได้แยกชนิดหน่วยลงทุนไว้ชัดเจน กองที่มีทั้งชนิดสะสมมูลค่า
+    และชนิดจ่ายปันผลจึงได้ประวัติชุดเดียวกันทั้งคู่ (K-INDIA-A(A) ที่ไม่จ่ายปันผล เคยได้ประวัติ
+    ของ K-INDIA-A(D) มาด้วย) จึงต้องยึดนโยบายของชนิดนี้เป็นตัวตัดก่อน แล้วค่อยกรองด้วยชื่อชนิด
+    เมื่อ ก.ล.ต. ระบุมา · ก.ล.ต. ไม่มีพารามิเตอร์กรองวันที่ จึงต้องตัด 3 ปีเองหลังดึงมา"""
+    if not pays_dividend:
+        return {}
+    tagged = [r for r in rows if (r.get("class_abbr_name") or "").strip() not in ("", "-")]
+    if tagged and cls and cls != "main":
+        matched = [r for r in tagged if (r.get("class_abbr_name") or "").strip().upper() == cls.upper()]
+        if matched:
+            rows = matched
     cutoff = (date.today() - timedelta(days=1095)).isoformat()
     year_ago = (date.today() - timedelta(days=365)).isoformat()
     pays, last12 = [], 0.0
@@ -512,6 +523,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     alloc_rows = get("alloc")
     nav_rows = pick(raw.get("nav") or [], cls, True, False)
     url_rows, bench_rows = get("urls"), get("bench")
+    pays_div = bool(div_rows) and str(div_rows[0].get("dividend_policy")).upper() == "Y"
     sd_by, cal, cal_bm = perf_extra(perf_rows)
     today = date.today()
 
@@ -540,7 +552,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "trackErr": to_num(stats.get("tracking_error")) if to_num(stats.get("tracking_error")) else "",
         "sharpe": sharpe_of(stats),
         "hedge": map_hedge(profile, stats, region),
-        "dividend": "yes" if div_rows and str(div_rows[0].get("dividend_policy")).upper() == "Y" else "no",
+        "dividend": "yes" if pays_div else "no",
         "minHold": min_hold or "",
         "fixedTerm": str(profile.get("proj_term_flag") or "").upper() == "Y",  # term funds: excluded from recommendations
     }
@@ -580,7 +592,7 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "price": price,                                   # ราคาต่อหน่วย -> หน้าพอร์ต
                    "link": factsheet_link(url_rows),                 # ปุ่มเปิด Fact Sheet ตัวจริง
                    "bench": benchmarks_of(bench_rows),               # เทียบกับดัชนีอะไร
-                   "div": dividend_stats(raw.get("divh") or [], price.get("nav"))}
+                   "div": dividend_stats(raw.get("divh") or [], price.get("nav"), cls, pays_div)}
     return fund
 
 
