@@ -29,6 +29,10 @@ import sec_server as sec
 HERE = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST = os.path.join(HERE, "watchlist.txt")
 IN_ACTIONS = os.environ.get("GITHUB_ACTIONS") == "true"
+# AUM comes from the newest NAV row in this window. Seven days lost a third of the funds
+# (aum 66.4% -> 47.5%) whenever a holiday stretch or a late filing fell inside it, which moved
+# the liquidity score for reasons that had nothing to do with the funds. sec_server already uses 14.
+NAV_DAYS = 14
 MAX_CALLS = int(os.environ.get("SEC_MAX_CALLS") or 8000)  # safety budget per run (protects the key's quota)
 AMC_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 WORKERS = max(1, min(8, int(os.environ.get("SEC_WORKERS") or 4)))  # endpoints downloaded at the same time
@@ -110,7 +114,7 @@ def collect_all():
     for key, (path, _, dated) in sec.DATASETS.items():
         jobs[key] = (lambda p=path, d=dated: fetch_all(p, {"latest": "true"} if d else None))
     jobs["nav"] = lambda: fetch_all("/v2/fund/daily-info/nav", {
-        "start_nav_date": (today - timedelta(days=7)).isoformat(), "end_nav_date": today.isoformat()})
+        "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(), "end_nav_date": today.isoformat()})
 
     results, notes = {}, []
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -198,7 +202,7 @@ def collect_watchlist():
                 raw[name] = fetch_all(path, {"proj_id": p["proj_id"], "latest": "true" if dated else None})
             today = date.today()
             raw["nav"] = fetch_all("/v2/fund/daily-info/nav", {
-                "proj_id": p["proj_id"], "start_nav_date": (today - timedelta(days=7)).isoformat(),
+                "proj_id": p["proj_id"], "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(),
                 "end_nav_date": today.isoformat()})
             out.append((p, raw, []))
     return out, errors
@@ -225,28 +229,29 @@ def quantile(values, p):
     return v[lo] if lo == i else v[lo] + (v[lo + 1] - v[lo]) * (i - lo)
 
 
-def ter_breaks(amc_files, min_n=30):
-    """TER percentile breakpoints per asset class -> [p10, p25, p50, p75, p90, n].
-    What counts as cheap only means something inside one asset class: a flat 0.5% line rates
-    86% of money market classes perfect and only 7% of global equity ones."""
+def pct_breaks(amc_files, key, positive_only=True, min_n=30):
+    """Percentile breakpoints of one numeric field per asset class -> [p10, p25, p50, p75, p90, n].
+    Cheap, or well paid for its risk, only means something inside one asset class: a flat 0.5%
+    TER line rates 86% of money market classes perfect and only 7% of global equity ones, and
+    money market funds roll short paper so fast that their turnover dwarfs any equity fund's."""
     by = {}
     for recs in amc_files.values():
         for f in recs.values():
-            t = f.get("ter")
-            if isinstance(t, (int, float)) and t > 0:
-                by.setdefault(f.get("assetClass") or "", []).append(float(t))
+            v = f.get(key)
+            if isinstance(v, (int, float)) and (v > 0 or not positive_only):
+                by.setdefault(f.get("assetClass") or "", []).append(float(v))
     return {ac: [round(quantile(v, q), 3) for q in (.10, .25, .50, .75, .90)] + [len(v)]
             for ac, v in by.items() if ac and len(v) >= min_n}
 
 
-DIAG_FIELDS = ["ter", "riskLevel", "aum", "maxDD", "sd", "trackErr", "ret1", "ret5", "bm5", "holdings"]
+DIAG_FIELDS = ["ter", "riskLevel", "aum", "maxDD", "sd", "sharpe", "trackErr", "ret1", "ret5", "bm5", "holdings"]
 
 
 def build_diag(amc_files):
     """How complete the SEC data really is. A criterion resting on a field only a few funds
     report is worse than no criterion, so every candidate field is measured before it is scored."""
     # seed every candidate at 0 so a field nobody reports shows as 0.0%, not as a missing key
-    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer"] + sec.STATS_EXTRA})
+    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm"] + sec.STATS_EXTRA})
     n, peer_desc = 0, Counter()
     for recs in amc_files.values():
         for f in recs.values():
@@ -255,7 +260,7 @@ def build_diag(amc_files):
                 if f.get(k) not in ("", None):
                     filled[k] += 1
             meta = f.get("sec") or {}
-            for k in ("alloc", "top5", "peer"):
+            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm"):
                 if meta.get(k):
                     filled[k] += 1
             for k in (meta.get("stats") or {}):
@@ -264,7 +269,15 @@ def build_diag(amc_files):
                 peer_desc[row[0]] += 1
     if not n:
         return {}
+    cal_pairs = Counter()
+    for recs in amc_files.values():
+        for f in recs.values():
+            meta = f.get("sec") or {}
+            cal, cal_bm, peer = meta.get("cal") or {}, meta.get("calBm") or {}, meta.get("peer") or []
+            peer_years = {row[1] for row in peer}
+            cal_pairs[sum(1 for y in cal if y in cal_bm or y in peer_years)] += 1
     return {"n": n,
+            "calPairs": dict(sorted(cal_pairs.items())),   # ปีปฏิทินที่มีทั้งกองและตัวเทียบ -> batting average
             "filled": {k: round(100.0 * c / n, 1) for k, c in sorted(filled.items(), key=lambda x: -x[1])},
             "peerDesc": peer_desc.most_common(25)}
 
@@ -366,7 +379,8 @@ def main():
         "amcs": amc_names,
         "errors": errors[:200],
         "stats": {"apiCalls": sec.CALLS["network"], "seconds": round(time.time() - started)},
-        "terPct": ter_breaks(amc_files),   # เกณฑ์ค่าธรรมเนียมแบบ percentile ในกลุ่มเดียวกัน
+        "terPct": pct_breaks(amc_files, "ter"),          # ค่าธรรมเนียมเทียบในกลุ่มเดียวกัน
+        "sharpePct": pct_breaks(amc_files, "sharpe", positive_only=False),  # ผลตอบแทนต่อความเสี่ยง
         "diag": diag,                      # ขั้น 0: ความครบของข้อมูล ใช้ตัดสินใจว่าจะสร้างเกณฑ์ใหม่ได้ไหม
         "fields": INDEX_FIELDS,
         "rows": index_items,

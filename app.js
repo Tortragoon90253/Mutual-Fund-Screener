@@ -17,15 +17,25 @@ const TER_PCT = {
   commodity:[0.53,0.73,1.275,1.952,3.21,96],     bond:[0.19,0.41,0.8,1.98,4.807,604],
   money_market:[0.13,0.19,0.29,0.38,0.732,85]
 };
-const terBreaks = ac => (secStatic && secStatic.terPct && secStatic.terPct[ac]) || TER_PCT[ac] || null;
-// อันดับค่าธรรมเนียมในกลุ่มเดียวกัน: 0 = ถูกที่สุด, 100 = แพงที่สุด
-function terRank(ter, br){
-  const pts = [[0,0],[br[0],10],[br[1],25],[br[2],50],[br[3],75],[br[4],90]];
+/* Sharpe แยกตามประเภทสินทรัพย์ — คนละสเกลกันสิ้นเชิง กองตราสารหนี้ p90 ถึง 8.95
+   ส่วนกองหุ้นไทย p50 แค่ 0.17 จึงเทียบข้ามประเภทไม่ได้ (ก.ย. 2026) */
+const SHARPE_PCT = {
+  global_equity:[-0.179,0.08,0.36,0.777,0.97,1194], thai_equity:[-0.305,-0.03,0.171,0.37,1.039,498],
+  mixed:[-0.136,0.131,0.534,0.81,1.18,256],         reit:[0.054,0.19,0.358,0.56,0.63,65],
+  bond:[-0.114,0.182,0.68,1.782,3.486,90]
+};
+const breaksFor = (tbl, key, ac) => (secStatic && secStatic[key] && secStatic[key][ac]) || tbl[ac] || null;
+const terBreaks = ac => breaksFor(TER_PCT, 'terPct', ac);
+const sharpeBreaks = ac => breaksFor(SHARPE_PCT, 'sharpePct', ac);
+// อันดับในกลุ่มเดียวกัน: 0 = ต่ำสุด, 100 = สูงสุด (รับค่าติดลบได้)
+function pctRank(v, br){
+  const pts = [[br[0],10],[br[1],25],[br[2],50],[br[3],75],[br[4],90]];
+  if (v <= br[0]) return clamp(10 - 10*(br[0]-v)/Math.max(br[1]-br[0], 1e-6), 0, 10);
   for (let i=1;i<pts.length;i++){
     const [x0,y0]=pts[i-1], [x1,y1]=pts[i];
-    if (ter<=x1) return x1===x0 ? y1 : y0 + (y1-y0)*(ter-x0)/(x1-x0);
+    if (v<=x1) return x1===x0 ? y1 : y0 + (y1-y0)*(v-x0)/(x1-x0);
   }
-  return clamp(90 + 10*(ter-br[4])/Math.max(br[4]*0.5, 0.25), 90, 100);
+  return clamp(90 + 10*(v-br[4])/Math.max(br[4]-br[3], 1e-6), 90, 100);
 }
 const DONUT = ['--d1','--d2','--d3','--d4','--d5','--d6','--d7'];  // สีของ donut พอร์ตกองทุน
 const REGION = {TH:'ไทย', US:'สหรัฐฯ', GLOBAL:'ทั่วโลก', EU:'ยุโรป', ASIA:'เอเชีย', CN:'จีน', JP:'ญี่ปุ่น', EM:'ตลาดเกิดใหม่', OTHER:'อื่นๆ'};
@@ -71,7 +81,8 @@ const FIELDS = [
     {k:'ret1', l:'กองทุน 1 ปี', t:'number', step:0.01}, {k:'bm1', l:'ดัชนีชี้วัด 1 ปี', t:'number', step:0.01},
     {k:'ret3', l:'กองทุน 3 ปี', t:'number', step:0.01}, {k:'bm3', l:'ดัชนีชี้วัด 3 ปี', t:'number', step:0.01},
     {k:'ret5', l:'กองทุน 5 ปี', t:'number', step:0.01}, {k:'bm5', l:'ดัชนีชี้วัด 5 ปี', t:'number', step:0.01},
-    {k:'trackErr', l:'Tracking Error (%) — กองดัชนี', t:'number', step:0.01}
+    {k:'trackErr', l:'Tracking Error (%) — กองดัชนี', t:'number', step:0.01},
+    {k:'sharpe', l:'Sharpe Ratio', t:'number', step:0.01, hint:'ผลตอบแทนส่วนเพิ่มต่อความเสี่ยง 1 หน่วย — ยิ่งสูงยิ่งดี'}
   ]},
   {g:'⑥ ป้องกันความเสี่ยงค่าเงิน', f:[
     {k:'hedge', l:'นโยบาย Hedging', t:'select', o:opts(HEDGE)}
@@ -140,8 +151,12 @@ function sanitizeFund(f){
     const slices = a => Array.isArray(a) ? a.slice(0,20)
       .map(x=>Array.isArray(x) ? [cleanStr(x[0],80), cleanNum(x[1],0,100)] : null)
       .filter(x=>x && x[0] && x[1] !== '' && x[1] > 0) : [];
+    const stats = o => { const out={};
+      if (o && typeof o==='object') Object.entries(o).slice(0,12).forEach(([k,v])=>{
+        if (/^[a-z_]{1,40}$/.test(k) && v!=='' && v!=null) out[k]=cleanStr(v,40); });
+      return out; };
     out.sec = {projId:cleanStr(s.projId,40), cls:cleanStr(s.cls,60), asOf:cleanStr(s.asOf,20), fetched:cleanStr(s.fetched,20), notes:list(s.notes), missing:list(s.missing),
-               alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20)};
+               alloc:slices(s.alloc), top5:slices(s.top5), portAsOf:cleanStr(s.portAsOf,20), stats:stats(s.stats)};
     if (!out.sec.projId) delete out.sec;
   }
   return out;
@@ -237,7 +252,7 @@ function evaluate(f, p){
     else if (br){
       // เทียบภายในกลุ่มสินทรัพย์เดียวกัน เพราะเส้นตายตัวข้ามกลุ่มให้คะแนนกลับหัว:
       // TER 0.5% ทำให้กองตลาดเงิน 86% ได้เต็ม แต่กองหุ้นต่างประเทศได้แค่ 7%
-      const rank = terRank(ter, br); s = Math.round(100-rank);
+      const rank = pctRank(ter, br); s = Math.round(100-rank);
       r.push(R(rank<=33?'good':rank<=75?'warn':'bad',
         `TER ${ter}% ต่อปี — ถูกกว่า ${s}% ของกองประเภทเดียวกัน (${a.label} ${br[5].toLocaleString()} กอง)`)); }
     else if (ter<=0.5){ s=100; r.push(R('good',`TER ${ter}% ต่อปี ต่ำมาก`)); }
@@ -258,6 +273,15 @@ function evaluate(f, p){
     else { let wins=0; per.forEach(([x,y,l])=>{ const d=num(f[x])-num(f[y]); if(d>=0) wins++; r.push(R(d>=0?'good':'warn',`${l}: กอง ${pct(num(f[x]),2)} vs ดัชนี ${pct(num(f[y]),2)} (${d>=0?'ชนะ':'แพ้'} ${Math.abs(d).toFixed(2)}%)`)); });
       s = 40 + 60*wins/per.length;
       if (!has(f.ret5)) { s-=10; r.push(R('warn','ไม่มีผลตอบแทน 5 ปี — ประวัติสั้นเกินกว่าจะสรุปได้')); } }
+    // ผลตอบแทนต้องดูคู่กับความเสี่ยงที่จ่ายไป และต้องเทียบในกลุ่มเดียวกัน เพราะ Sharpe
+    // ของกองตราสารหนี้กับกองหุ้นอยู่คนละสเกล · ดัชนีชี้วัด 5 ปีมีแค่ 36% ของกอง แต่ Sharpe มี 61%
+    const sbr = sharpeBreaks(f.assetClass);
+    if (has(f.sharpe) && sbr){
+      const rk = pctRank(num(f.sharpe), sbr);
+      if (!per.length) s = Math.round(35 + 0.6*rk);            // ไม่มีดัชนีให้เทียบ -> ใช้ตัวนี้แทนการเดา 50
+      else s = clamp(s + Math.round((rk-50)*0.3), 0, 100);     // มีดัชนีอยู่แล้ว -> ปรับได้ ±15
+      r.push(R(rk>=60?'good':rk>=30?'warn':'bad',
+        `Sharpe ${num(f.sharpe)} — ดีกว่า ${Math.round(rk)}% ของกองประเภทเดียวกัน (${a.label} ${sbr[5].toLocaleString()} กอง)`)); }
     if (has(f.ret1) && has(f.ret5) && num(f.ret1)>20 && num(f.ret1)>2*num(f.ret5)) r.push(R('warn','ผลตอบแทนปีล่าสุดสูงกว่าค่าเฉลี่ยระยะยาวมาก — ระวังการซื้อตามกระแส'));
     if (has(f.trackErr) && num(f.trackErr)>1.5){ s-=10; r.push(R('warn',`Tracking Error ${f.trackErr}% ค่อนข้างสูง`)); }
     C('c5', s, r); }
@@ -385,7 +409,7 @@ function fillForm(f){
   $('#btnSave').textContent = f ? 'บันทึกการแก้ไข' : 'บันทึกกองทุน';
 }
 // Fields the SEC data can fill; empty ones are highlighted for manual entry. Inferred ones get a "check" outline.
-const SEC_FILLABLE = ['holdings','top5','riskLevel','maxDD','sd','front','back','ter','ret1','bm1','ret3','bm3','ret5','bm5','aum','settle','minBuy'];
+const SEC_FILLABLE = ['holdings','top5','riskLevel','maxDD','sd','front','back','ter','ret1','bm1','ret3','bm3','ret5','bm5','sharpe','aum','settle','minBuy'];
 const SEC_INFERRED = ['assetClass','region','hedge','minHold'];
 function markSecFields(f){
   const isSec = !!(f && f.sec);
@@ -411,8 +435,15 @@ function saveFund(){
    alloc = สัดส่วนประเภททรัพย์สิน (%NAV) -> donut · top5 = ทรัพย์สิน 5 อันดับแรก -> รายการ */
 function portBlock(f){
   const s = f.sec; if (!s) return '';
-  const alloc = s.alloc || [], top5 = s.top5 || [];
-  if (!alloc.length && !top5.length) return '';
+  const alloc = s.alloc || [], top5 = s.top5 || [], st = s.stats || {};
+  // ค่า '0' คือช่องที่ บลจ. ไม่ได้กรอก ไม่ใช่ศูนย์จริง (YTM ครึ่งหนึ่งของที่รายงานมาเป็น 0)
+  const val = v => { const t=String(v ?? '').trim(); return (!t || parseFloat(t)===0) ? '' : t; };
+  const bondish = f.assetClass==='bond' || f.assetClass==='money_market';
+  const extra = [['อัตราหมุนเวียนการลงทุน (เท่า/ปี)', val(st.portfolio_turnover_ratio), true],
+                 ['ระยะเวลาฟื้นจากขาดทุนสูงสุด', String(st.recovering_period||'').trim(), true],
+                 ['อายุเฉลี่ยตราสาร (Duration)', String(st.portfolio_duration_period||'').trim(), bondish],
+                 ['Yield to Maturity (%)', val(st.yield_to_maturity), bondish]].filter(x=>x[2] && x[1]);
+  if (!alloc.length && !top5.length && !extra.length) return '';
   const asOf = s.portAsOf || s.asOf;
   const row = (x, i) => `<li>${i===null?'':`<span class="sw" style="background:var(${DONUT[i%DONUT.length]})"></span>`}`
     + `<span class="nm" title="${esc(x[0])}">${esc(x[0])}</span><span class="pv">${x[1].toFixed(2)}%</span></li>`;
@@ -422,6 +453,8 @@ function portBlock(f){
   if (top5.length) parts.push(`<h5>ทรัพย์สิน 5 อันดับแรก</h5><ul class="port-list">${top5.map(x=>row(x,null)).join('')}</ul>`);
   if (alloc.length && Math.abs(total-100) >= 0.5)
     parts.push(`<p class="meta" style="margin:6px 0 0">รวมที่แฟกต์ชีตระบุ ${total.toFixed(2)}% ของ NAV — ส่วนที่เหลือไม่ได้แจกแจงไว้</p>`);
+  if (extra.length) parts.push(`<h5>ข้อมูลประกอบ</h5><ul class="port-list">${extra
+    .map(([k,v])=>`<li><span class="nm">${esc(k)}</span><span class="pv">${esc(v)}</span></li>`).join('')}</ul>`);
   if (f.feeder)
     parts.push(`<p class="meta" style="margin:6px 0 0">เป็น Feeder Fund — สัดส่วนนี้คือการถือหน่วยของกองหลัก ไม่ใช่ทรัพย์สินที่กองหลักลงทุนจริง</p>`);
   return `<details class="port" data-port="${esc(f.id)}">
@@ -496,10 +529,12 @@ async function loadStatic(){
   const j = await getJson('data/index.json');
   if (!j || !(Array.isArray(j.items) || Array.isArray(j.rows))) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
   const amcs = (j.amcs && typeof j.amcs==='object') ? j.amcs : {};
-  j.terPct = (j.terPct && typeof j.terPct==='object') ? Object.fromEntries(Object.entries(j.terPct)
+  const breaks = (o, allowNeg) => (o && typeof o==='object') ? Object.fromEntries(Object.entries(o)
     .filter(([k,v])=>ASSET[k] && Array.isArray(v) && v.length===6
-      && v.every(x=>typeof x==='number' && isFinite(x) && x>=0)
+      && v.every(x=>typeof x==='number' && isFinite(x) && (allowNeg || x>=0))
       && v.slice(0,5).every((x,i,arr)=>i===0 || x>=arr[i-1]))) : null;
+  j.terPct = breaks(j.terPct, false);
+  j.sharpePct = breaks(j.sharpePct, true);
   // pre-compute a lowercase search string per share class
   const raw = Array.isArray(j.rows) && Array.isArray(j.fields)
     ? j.rows.filter(Array.isArray).map(row=>Object.fromEntries(j.fields.map((k,i)=>[k,row[i]])))

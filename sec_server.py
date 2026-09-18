@@ -202,6 +202,10 @@ def holding_rows(rows, by_ratio=False):
 STATS_EXTRA = ["sharpe_ratio", "alpha", "beta", "portfolio_turnover_ratio",
                "portfolio_duration_period", "yield_to_maturity", "recovering_period"]
 PEER_DESC = re.compile(r"ค่าเฉลี่ย|เปอร์เซ็นไทล์|percentile|peer", re.I)
+BM_DESC = re.compile(r"ตัวชี้วัด|benchmark|ดัชนี", re.I)
+VOL_DESC = re.compile(r"ผันผวน|volatil|standard deviation", re.I)
+RET_DESC = re.compile(r"ผลการดำเนินงาน|ผลตอบแทน|return|performance", re.I)
+CAL_PERIOD = re.compile(r"^\s*(20\d\d)\s*$")
 
 
 def stats_extra(stats):
@@ -213,6 +217,38 @@ def stats_extra(stats):
         if v not in (None, "", "-"):
             out[k] = v
     return out
+
+
+def sharpe_of(stats):
+    """Sharpe as a number, or "" when the sheet is really saying "not computed".
+    Nine funds report 999.99 and a few report tens; left in, those take the top score outright
+    and drag their asset class's percentile breakpoints with them. Real values sit in -6..10."""
+    v = to_num(stats.get("sharpe_ratio"))
+    return v if v not in (None, 0) and abs(v) < 100 else ""
+
+
+def perf_extra(rows):
+    """SD per period, and the fund's own calendar-year returns beside the benchmark's.
+    map_performance keeps a single SD from the longest period available and only 1/3/5-year
+    returns. A Sharpe built from a 5-year return over a 1-year SD looks plausible and is wrong,
+    so the periods are kept apart; the calendar years are what a hit-rate across years needs."""
+    sd_by, cal, cal_bm = {}, {}, {}
+    for r in rows:
+        desc = str(r.get("performance_type_desc") or "")
+        period = str(r.get("reference_period") or "")
+        val = to_num(r.get("performance_value"))
+        if val is None or PEER_DESC.search(desc):
+            continue
+        is_bm = bool(BM_DESC.search(desc))
+        if VOL_DESC.search(desc):
+            y = years_of(period)
+            if not is_bm and y in (1, 3, 5):
+                sd_by[str(y)] = val
+        elif RET_DESC.search(desc):
+            m = CAL_PERIOD.match(period)
+            if m:
+                (cal_bm if is_bm else cal)[m.group(1)] = val
+    return sd_by, cal, cal_bm
 
 
 def peer_rows(rows):
@@ -386,6 +422,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     gen_fee_rows = get("genfees")
     perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
     alloc_rows = get("alloc")
+    sd_by, cal, cal_bm = perf_extra(perf_rows)
     nav_rows = pick(raw.get("nav") or [], cls, True, False)
     today = date.today()
 
@@ -412,6 +449,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "riskLevel": str(risk_level) if risk_level else "",
         "maxDD": abs(to_num(stats.get("maximum_drawdown"))) if to_num(stats.get("maximum_drawdown")) is not None else "",
         "trackErr": to_num(stats.get("tracking_error")) if to_num(stats.get("tracking_error")) else "",
+        "sharpe": sharpe_of(stats),
         "hedge": map_hedge(profile, stats, region),
         "dividend": "yes" if div_rows and str(div_rows[0].get("dividend_policy")).upper() == "Y" else "no",
         "minHold": min_hold or "",
@@ -448,8 +486,9 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "alloc": holding_rows(alloc_rows, by_ratio=True),  # ประเภททรัพย์สิน -> donut
                    "top5": holding_rows(top5),                        # 5 อันดับแรก, เรียงตามอันดับที่รายงาน
                    "portAsOf": port_asof,
-                   "stats": stats_extra(stats),                       # ขั้น 0: เก็บไว้วัด ยังไม่คิดคะแนน
-                   "peer": peer_rows(perf_rows)}
+                   "stats": stats_extra(stats),                       # turnover / duration / YTM -> แสดงในการ์ด
+                   "peer": peer_rows(perf_rows),
+                   "sdBy": sd_by, "cal": cal, "calBm": cal_bm}          # เก็บไว้วัด ยังไม่คิดคะแนน
     return fund
 
 
