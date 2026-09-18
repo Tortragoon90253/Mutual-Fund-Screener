@@ -213,15 +213,24 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
 
 <!-- PORTFOLIO -->
 <div class="section" id="section-port">
-  <div class="card soon">
-    <h2>พอร์ตของฉัน</h2>
-    <p class="sub">ยังไม่เปิดใช้งาน กำลังพัฒนา</p>
-    <p style="margin:0;font-size:.92rem">หน้านี้จะติดตามมูลค่าพอร์ตจริง กำไร/ขาดทุน และค่าธรรมเนียมที่จ่ายไปจริง ยังต้องเพิ่มอีกสองอย่าง:</p>
-    <ul>
-      <li>ราคาต่อหน่วย (<code>last_val</code>) — ก.ล.ต. ส่งมาอยู่แล้วทุกรอบ แต่โปรแกรมยังไม่ได้เก็บ</li>
-      <li>จำนวนหน่วยและต้นทุนที่คุณกรอกเอง — ก.ล.ต. ไม่รู้ว่าคุณถืออะไร</li>
-    </ul>
-    <p class="muted" style="font-size:.86rem;margin:12px 0 0">ตอนนี้ "จัดพอร์ต" ในหน้าวางแผนเก็บเป็นสัดส่วน % เท่านั้น ยังไม่ใช่จำนวนหน่วยจริง</p>
+  <div class="kpis" id="pfKpis"></div>
+  <div class="card">
+    <h2>รายการที่ถืออยู่</h2>
+    <p class="sub">กรอกจำนวนหน่วยและต้นทุนเฉลี่ยต่อหน่วยจากใบยืนยันการซื้อ — กองที่ยังไม่ได้กรอกจำนวนหน่วยจะไม่ถูกนับ · ราคาต่อหน่วยล่าสุดมาจาก ก.ล.ต.</p>
+    <div class="scroll"><table id="holdTable"></table></div>
+    <p class="muted" id="holdNote" style="margin:10px 0 0"></p>
+  </div>
+  <div class="two">
+    <div class="card">
+      <h2>สัดส่วนตามประเภทสินทรัพย์</h2>
+      <p class="sub">คิดจากมูลค่าปัจจุบัน ไม่ใช่เงินที่ลงไป</p>
+      <div class="port-chart" style="width:200px;height:200px;margin:0 auto 12px"><canvas id="holdDonut"></canvas></div>
+      <ul class="port-list" id="holdLegend"></ul>
+    </div>
+    <div class="card">
+      <h2>สิ่งที่ควรดู</h2>
+      <div id="holdAlerts"></div>
+    </div>
   </div>
 </div>
 

@@ -241,6 +241,24 @@ def fund_aum(rows):
     return round(total / 1e6, 1) if total > 0 else ""
 
 
+def fund_price(rows):
+    """ราคาต่อหน่วยล่าสุดของชนิดหน่วยลงทุนนี้ -> {navDate, nav, sell, buy}.
+    sell คือราคาที่ผู้ลงทุนจ่ายตอนซื้อ buy คือราคาที่ได้รับตอนขายคืน ส่วนต่างคือ
+    ค่าธรรมเนียมที่บวกไว้ในราคาจริงของวันนั้น · ค่า 0 คือช่องที่ไม่ได้กรอก ไม่ใช่ราคาศูนย์"""
+    newest = None
+    for r in rows:
+        if to_num(r.get("last_val")) and (newest is None or (r.get("nav_date") or "") > (newest.get("nav_date") or "")):
+            newest = r
+    if not newest:
+        return {}
+    out = {"navDate": (newest.get("nav_date") or "")[:10], "nav": to_num(newest.get("last_val"))}
+    for key, field in (("sell", "sell_price"), ("buy", "buy_price")):
+        v = to_num(newest.get(field))
+        if v:
+            out[key] = v
+    return out
+
+
 def sharpe_of(stats):
     """Sharpe as a number, or "" when the sheet is really saying "not computed".
     Nine funds report 999.99 and a few report tens; left in, those take the top score outright
@@ -444,6 +462,7 @@ def assemble_fund(profile, cls, raw, notes=None):
     gen_fee_rows = get("genfees")
     perf_rows, div_rows, period_rows, min_rows, top5 = get("perf"), get("div"), get("periods"), get("mins"), get("top5")
     alloc_rows = get("alloc")
+    nav_rows = pick(raw.get("nav") or [], cls, True, False)
     sd_by, cal, cal_bm = perf_extra(perf_rows)
     today = date.today()
 
@@ -507,7 +526,8 @@ def assemble_fund(profile, cls, raw, notes=None):
                    "portAsOf": port_asof,
                    "stats": stats_extra(stats),                       # turnover / duration / YTM -> แสดงในการ์ด
                    "peer": peer_rows(perf_rows),
-                   "sdBy": sd_by, "cal": cal, "calBm": cal_bm}          # เก็บไว้วัด ยังไม่คิดคะแนน
+                   "sdBy": sd_by, "cal": cal, "calBm": cal_bm,       # เก็บไว้วัด ยังไม่คิดคะแนน
+                   "price": fund_price(nav_rows)}                    # ราคาต่อหน่วย -> หน้าพอร์ต
     return fund
 
 

@@ -251,7 +251,7 @@ def build_diag(amc_files):
     """How complete the SEC data really is. A criterion resting on a field only a few funds
     report is worse than no criterion, so every candidate field is measured before it is scored."""
     # seed every candidate at 0 so a field nobody reports shows as 0.0%, not as a missing key
-    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm"] + sec.STATS_EXTRA})
+    filled = Counter({k: 0 for k in DIAG_FIELDS + ["alloc", "top5", "peer", "sdBy", "cal", "calBm", "price"] + sec.STATS_EXTRA})
     n, peer_desc = 0, Counter()
     for recs in amc_files.values():
         for f in recs.values():
@@ -260,7 +260,7 @@ def build_diag(amc_files):
                 if f.get(k) not in ("", None):
                     filled[k] += 1
             meta = f.get("sec") or {}
-            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm"):
+            for k in ("alloc", "top5", "peer", "sdBy", "cal", "calBm", "price"):
                 if meta.get(k):
                     filled[k] += 1
             for k in (meta.get("stats") or {}):
