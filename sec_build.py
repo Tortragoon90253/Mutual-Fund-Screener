@@ -193,6 +193,12 @@ def collect_all():
                     f.cancel()
                 raise
 
+    # endpoint ที่ตอบ 200 พร้อมรายการว่างไม่ใช่ error ต้องประกาศออกมาเอง ไม่งั้นจะเงียบ
+    for key, rows in results.items():
+        if key != "profiles" and not rows:
+            notes.append(f"{sec.DATASET_LABELS.get(key, key)} ไม่มีข้อมูลเลยในรอบนี้")
+            warn(notes[-1])
+
     unique = {}
     for p in results["profiles"]:
         if sec.is_active(p) and p.get("proj_id"):
@@ -346,6 +352,22 @@ def build_diag(amc_files):
             "peerDesc": peer_desc.most_common(25)}
 
 
+def lost_fields(prev, now, floor=20.0, keep=0.2):
+    """ฟิลด์ที่เคยมีข้อมูลแล้วหายไปเกือบหมด เทียบกับรอบก่อนที่เผยแพร่ไว้.
+
+    endpoint ที่ล่มชั่วคราวจะตอบ 200 พร้อมรายการว่าง ไม่ใช่ error โปรแกรมจึงเดินต่อและ
+    เผยแพร่ทับข้อมูลดีด้วยข้อมูลที่ขาด — รอบ 18 ก.ย. performance คืน 0 แถวจาก 178,295 แถว
+    ทำให้ผลตอบแทน ดัชนีชี้วัด ความผันผวน และผลตอบแทนรายปี หายทั้งชุดในครั้งเดียว"""
+    out = []
+    for k, was in (prev or {}).items():
+        if not isinstance(was, (int, float)) or was < floor:
+            continue
+        cur = now.get(k, 0)
+        if cur <= was * keep:
+            out.append(f"{k} {was}% -> {cur}%")
+    return out
+
+
 def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -414,9 +436,11 @@ def main():
     index_items.sort(key=lambda r: (r[2], r[1]))
     fp = digest(index_items, amc_files)
     index_path = os.path.join(args.out, "index.json")
+    prev = {}
     try:
         with open(index_path, encoding="utf-8") as f:
-            if json.load(f).get("digest") == fp:
+            prev = json.load(f)
+            if prev.get("digest") == fp:
                 set_output("changed", "false")
                 log(f"ข้อมูลไม่เปลี่ยนแปลง ({len(index_items):,} รายการ) · เรียก API {sec.CALLS['network']:,} ครั้ง"
                     f" · {time.time() - started:.0f} วินาที")
@@ -425,6 +449,15 @@ def main():
         pass
 
     diag = build_diag(amc_files)
+    lost = lost_fields((prev.get("diag") or {}).get("filled"), diag.get("filled") or {}) if diag else []
+    if lost and os.environ.get("SEC_ALLOW_LOSS") != "1":
+        for line in lost:
+            warn(f"ข้อมูลหายเทียบกับรอบก่อน: {line}")
+        log("ไม่เผยแพร่ทับข้อมูลเดิม — endpoint น่าจะล่มชั่วคราว ให้รันใหม่ "
+            "(ถ้าข้อมูลหายจริงและตั้งใจ ตั้ง SEC_ALLOW_LOSS=1)")
+        set_output("changed", "false")
+        return 1
+
     if diag:
         top = ", ".join(f"{k} {v}%" for k, v in list(diag["filled"].items())[:8])
         log(f"ความครบของข้อมูล ({diag['n']:,} รายการ): {top}")
