@@ -1780,6 +1780,34 @@ function renderHome(){
 }
 
 /* ---- ภาพรวมแผนทั้งหมด (อยู่ในหน้าแรก) ---- */
+/* การเรียงของตารางแผน — เก็บไว้นอกฟังก์ชันวาด เพื่อให้ยังเรียงเหมือนเดิมเมื่อวาดใหม่
+   ค่าเริ่มต้นคือเวลาที่เหลือ เพราะแผนที่ใกล้ครบกำหนดคือแผนที่ต้องตัดสินใจก่อน */
+let ovSort = {k:'left', dir:1};
+const OV_COLS = [
+  {k:'name',   l:'แผน',           v:r=>r.pl.name},
+  {k:'mode',   l:'รูปแบบ',         v:r=>r.modeText},
+  {k:'years',  l:'ปี',            v:r=>r.years,   num:true},
+  {k:'left',   l:'เหลือ',          v:r=>r.matured ? -1 : r.left, num:true},
+  {k:'month',  l:'ต่อเดือน',       v:r=>r.contributing ? r.monthly : 0, num:true},
+  {k:'span',   l:'ช่วงเวลา',       v:r=>r.left},
+  {k:'now',    l:'มีจริงตอนนี้',    v:r=>r.nowValue, num:true},
+  {k:'start',  l:'เริ่ม → ครบ',    v:r=>r.start || ''},
+  {k:'diff',   l:'เทียบกับแผน',    v:r=>r.onPlan!=null ? r.nowValue-r.onPlan : null, num:true},
+  {k:'more',   l:'จะใส่อีก',       v:r=>r.monthly*r.dcaLeft, num:true},
+  {k:'end',    l:'คาดการณ์',       v:r=>r.rows ? r.rows[r.rows.length-1].value : null, num:true}
+];
+function ovSorted(runs){
+  const col = OV_COLS.find(c=>c.k===ovSort.k) || OV_COLS[3];
+  return [...runs].sort((a,b)=>{
+    const x = col.v(a), y = col.v(b);
+    // ช่องที่ยังไม่มีค่าไปอยู่ท้ายเสมอ ไม่ว่าจะเรียงขึ้นหรือลง — ค่าว่างไม่ใช่ค่าน้อยที่สุด
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = typeof x === 'string' ? x.localeCompare(y, 'th') : x - y;
+    return c * ovSort.dir;
+  });
+}
 function renderOverview(){
   if (!$('#ovPlans')) return;
   const runs = allPlanRuns(), series = combinedSeries(runs);
@@ -1803,8 +1831,15 @@ function renderOverview(){
   if (actRaw && actRaw.noPrice.length) sub.push(`ไม่ได้รวม ${actRaw.noPrice.join(', ')} เพราะยังไม่มีราคาต่อหน่วยเลยสักจุด`);
   $('#ovSub').textContent = sub.join(' · ');
 
-  const order = [...runs].sort((a,b)=>a.left-b.left);
-  $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th>รูปแบบ</th><th class="num">ปี</th><th class="num">เหลือ</th><th class="num">ต่อเดือน</th><th>ช่วงเวลา</th><th class="num">มีจริงตอนนี้</th><th>เริ่ม → ครบ</th><th class="num">เทียบกับแผน</th><th class="num">จะใส่อีก</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
+  const order = ovSorted(runs);
+  // สีของแถบช่วงเวลาต้องผูกกับตัวแผน ไม่ใช่ลำดับในตาราง ไม่งั้นสลับการเรียงแล้วสีจะสลับตาม
+  const hue = r => DONUT[state.plans.findIndex(p=>p.id===r.pl.id) % DONUT.length];
+  const head = OV_COLS.map(c=>{
+    const on = ovSort.k===c.k;
+    return `<th class="sortable${c.num?' num':''}${on?' on':''}" data-ovsort="${c.k}" tabindex="0" role="button"`
+      + ` aria-label="เรียงตาม${esc(c.l)}">${esc(c.l)}<span class="ar">${on ? (ovSort.dir>0?'▲':'▼') : '↕'}</span></th>`;
+  }).join('');
+  $('#ovPlans').innerHTML = `<thead><tr>${head}</tr></thead><tbody>${
     order.map((r,i)=>{
       const diff = r.onPlan!=null ? r.nowValue - r.onPlan : null;
       return `<tr${r.pl.id===state.activePlan?' class="sel"':''}>
@@ -1814,9 +1849,12 @@ function renderOverview(){
       <td class="num">${r.matured?'<span class="muted">ครบแล้ว</span>':r.future?'<span class="muted">ยังไม่เริ่ม</span>':r.started?r.left:'–'}</td>
       <td class="num">${r.monthly ? (r.contributing
           ? `${fmtB(r.monthly)}<div class="muted" style="font-size:.75rem">อีก ${r.dcaLeft} เดือน</div>`
-          : `<span class="muted">${fmtB(r.monthly)}</span><div class="muted" style="font-size:.75rem">${r.matured?'ครบกำหนด':'ครบรอบ DCA แล้ว'}</div>`)
+          : `<span class="muted">${fmtB(r.monthly)}</span><div class="muted" style="font-size:.75rem">${
+              // แผนที่ยังไม่ถึงวันเริ่ม ยังไม่ได้ครบรอบอะไร แค่ยังไม่ถึงคิว
+              // offsetM คือเวลารอถึงวันเริ่ม ส่วน dcaLeft คือความยาวของหน้าต่าง DCA คนละเรื่องกัน
+              r.matured ? 'ครบกำหนด' : r.future ? `เริ่มอีก ${r.offsetM} เดือน` : 'ครบรอบ DCA แล้ว'}</div>`)
         : '–'}</td>
-      <td><span class="bar-cell"><i style="width:${Math.round(r.left/maxY*100)}%;background:var(${DONUT[i%DONUT.length]})"></i></span></td>
+      <td><span class="bar-cell"><i style="width:${Math.round(r.left/maxY*100)}%;background:var(${hue(r)})"></i></span></td>
       <td class="num">${r.nowValue?fmtB(r.nowValue):'<span class="muted">ยังไม่ซื้อ</span>'}</td>
       <td>${r.start?`<span class="muted" style="font-size:.8rem">${esc(r.start)} → ${esc(r.endDate)}</span>`:'<span class="muted" style="font-size:.8rem">ยังไม่กำหนด</span>'}</td>
       <td class="num" ${diff!=null?`style="color:var(${diff>=0?'--good':'--bad'})"`:''}>${diff!=null?`${diff>=0?'+':'−'}${fmtB(Math.abs(diff))}`:'–'}</td>
@@ -1827,6 +1865,14 @@ function renderOverview(){
     }).join('')}</tbody>`;
   document.querySelectorAll('[data-goplan]').forEach(b=>b.addEventListener('click',()=>{
     switchPlan(b.dataset.goplan); showSection('plan'); }));
+  document.querySelectorAll('[data-ovsort]').forEach(th=>{
+    const go = ()=>{ const k = th.dataset.ovsort;
+      // คลิกคอลัมน์เดิมซ้ำ = สลับทิศ · คลิกคอลัมน์ใหม่ = เริ่มจากน้อยไปมาก
+      ovSort = (ovSort.k===k) ? {k, dir:-ovSort.dir} : {k, dir:1};
+      renderOverview(); };
+    th.addEventListener('click', go);
+    th.addEventListener('keydown', e=>{ if (e.key==='Enter' || e.key===' '){ e.preventDefault(); go(); } });
+  });
 
   // สัดส่วนสินทรัพย์รวม ถ่วงน้ำหนักด้วยเงินที่แต่ละแผนจะใส่จนครบ
   const byClass = {}, byFund = {};
@@ -1866,7 +1912,19 @@ function renderOverview(){
     draw('ovChart', {type:'line',
       data:{labels, datasets:ds},
       options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-        scales:{x:{grid:{color:C.grid}, ticks:{autoSkip:true, maxTicksLimit:9, maxRotation:0}},
+        scales:{x:{grid:{color:C.grid}, ticks:{autoSkip:false, maxRotation:0},
+          // autoSkip เลือกป้ายเองแล้วมักตัดป้ายสุดท้ายทิ้ง แกนจึงดูเหมือนจบก่อนแผนจริงหลายปี
+          // เลือกเองให้ห่างเท่าๆ กันและบังคับให้มีวันสุดท้ายเสมอ เพราะนั่นคือวันที่แผนสุดท้ายครบกำหนด
+          afterBuildTicks: a => {
+            const n = labels.length, want = 8;
+            if (n < 2){ a.ticks = [{value:0}]; return; }
+            const step = Math.max(1, Math.round((n-1)/(want-1)));
+            const idx = [];
+            for (let i = 0; i < n-1; i += step) idx.push(i);
+            if (idx.length && n-1 - idx[idx.length-1] < step/2) idx.pop();   // ใกล้ป้ายสุดท้ายเกินไปจะทับกัน
+            idx.push(n-1);
+            a.ticks = idx.map(value=>({value}));
+          }},
                 y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
         plugins:{legend:{position:'bottom'},
           tooltip:{callbacks:{label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
@@ -2208,12 +2266,15 @@ function planRun(pl){
   // มูลค่าที่แผนบอกว่า "ควรมี" ณ เวลาที่ผ่านมาแล้ว ใช้เทียบว่าตามแผนหรือไม่ — เทียบรายเดือน
   // ไม่ใช่ปัดเป็นปี เพราะแผนที่เพิ่งเริ่มไป 4 เดือนจะถูกเทียบกับเป้าของปีที่ 0 หรือปีที่ 1 ซึ่งห่างกันมาก
   const onPlan = plannedM && started ? plannedM[Math.min(elapsedM, plannedM.length-1)].value : null;
+  // แผนที่ยังไม่เริ่มต้องไปเริ่มบนแกนเวลาที่วันเริ่มของมันเอง ไม่ใช่ทับกันที่วันนี้ทุกแผน
+  // ไม่งั้นแผนที่ตั้งไว้ว่าเริ่มปี 2030 จะถูกวาดเหมือนเริ่มวันนี้ แล้วแกนวันที่กับตารางแผนจะไม่ตรงกัน
+  const offsetM = (!started && start && elapsedRaw < 0) ? Math.round(-elapsedRaw*12) : 0;
   const dcaAll = dcaN >= 12*years;
   const dcaLabel = !dcaN ? '' : dcaAll ? `ตลอด ${years} ปี`
                  : dcaN % 12 === 0 ? `${dcaN/12} ปีแรก` : `${dcaN} เดือนแรก`;
   const modeText = !dcaN ? 'ก้อนเดียว' : (lump>0 ? `ผสม · DCA ${dcaLabel}` : `DCA ${dcaLabel}`);
   return {pl, legs, years, left, lump, monthly, planned, plannedM, rows, rowsM, nowValue, nowCost, elapsed, started, onPlan,
-          start, endDate, future, matured, dcaN, dcaLeft, dcaLabel, modeText,
+          start, endDate, future, matured, dcaN, dcaLeft, dcaLabel, modeText, offsetM,
           contributing: monthly>0 && dcaLeft>0 && !future,
           gainSoFar: started ? nowValue - nowCost : 0,
           money: started ? nowCost + monthly*dcaLeft : lump + monthly*dcaN};
@@ -2223,14 +2284,16 @@ function allPlanRuns(){ return state.plans.map(planRun); }
 function combinedSeries(runs){
   const live = runs.filter(r=>r.rowsM && r.rowsM.length);
   if (!live.length) return null;
-  const maxM = Math.max(...live.map(r=>r.rowsM.length-1));
-  const at = (r, m) => r.rowsM[Math.min(m, r.rowsM.length-1)];
+  const maxM = Math.max(...live.map(r=>r.offsetM + r.rowsM.length - 1));
+  // เดือนก่อนถึงวันเริ่มของแผนนั้น แผนยังไม่มีอยู่ จึงไม่นับเข้าไปในผลรวม
+  const at = (r, m) => { const i = m - r.offsetM;
+    return i < 0 ? null : r.rowsM[Math.min(i, r.rowsM.length-1)]; };
   // แผนที่เริ่มแล้วเริ่มเส้นที่ "มูลค่าวันนี้" ซึ่งรวมกำไรที่ยังไม่ขายไว้ด้วย
   // เส้นเงินที่ใส่ไปจึงต้องหักกำไรนั้นออก ไม่งั้นจะดูเหมือนใส่เงินมากกว่าที่ใส่จริง
   return Array.from({length: maxM+1}, (_,m)=>({
     month: m, year: m/12,
-    value: live.reduce((t,r)=>t + at(r,m).value, 0),
-    principal: live.reduce((t,r)=>t + at(r,m).principal - r.gainSoFar, 0)
+    value: live.reduce((t,r)=>{ const x = at(r,m); return t + (x ? x.value : 0); }, 0),
+    principal: live.reduce((t,r)=>{ const x = at(r,m); return t + (x ? x.principal - r.gainSoFar : 0); }, 0)
   }));
 }
 function renderPlan(){

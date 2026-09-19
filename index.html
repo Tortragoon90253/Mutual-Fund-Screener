@@ -180,6 +180,13 @@ th,td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left;whit
 th{color:var(--muted);font-weight:600;font-size:.7rem;letter-spacing:.05em;text-transform:uppercase}
 tbody tr:hover{background:var(--surface-2)}
 td.num,th.num{text-align:right}
+/* หัวคอลัมน์ที่กดเรียงได้ — ลูกศรจางไว้ก่อน ชี้เมาส์ค่อยชัด จะได้รู้ว่ากดได้โดยไม่รกตา */
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover,th.sortable:focus-visible{color:var(--text);outline:none}
+th.sortable .ar{display:inline-block;margin-left:5px;font-size:.72rem;opacity:.28}
+th.sortable:hover .ar{opacity:.6}
+th.sortable.on{color:var(--text)}
+th.sortable.on .ar{opacity:1;color:var(--accent)}
 td.num{font-family:var(--mono);font-size:.84rem;font-variant-numeric:tabular-nums}
 .cell{display:inline-block;min-width:38px;text-align:center;border-radius:5px;padding:1px 6px;font-family:var(--mono);font-weight:600;font-size:.8rem;font-variant-numeric:tabular-nums}
 .s-good{background:var(--good-soft);color:var(--good)}
