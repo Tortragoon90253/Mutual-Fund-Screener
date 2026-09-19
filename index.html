@@ -293,15 +293,17 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
   </div>
   <div class="card">
     <h2>บันทึกรายการซื้อขาย</h2>
-    <p class="sub">กรอกจากใบยืนยันการซื้อ — ใส่จำนวนเงินและจำนวนหน่วย โปรแกรมคำนวณราคาต่อหน่วยให้</p>
+    <p class="sub">กรอกจากใบยืนยันการซื้อ — ใส่สองในสามช่อง (จำนวนเงิน · ราคา/หน่วย · จำนวนหน่วย) แล้วช่องที่เหลือจะคำนวณให้เอง</p>
     <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))">
       <label class="f">กองทุน<select id="txFund"></select></label>
       <label class="f">แผน<select id="txPlan"></select></label>
       <label class="f">วันที่<input type="date" id="txDate"></label>
       <label class="f">ประเภท<select id="txKind"><option value="buy">ซื้อ</option><option value="sell">ขายคืน</option></select></label>
       <label class="f">จำนวนเงิน (บาท)<input type="number" id="txAmount" min="0" step="0.01"></label>
+      <label class="f">ราคา/หน่วย (บาท)<input type="number" id="txNav" min="0" step="0.0001"></label>
       <label class="f">จำนวนหน่วย<input type="number" id="txUnits" min="0" step="0.0001"></label>
     </div>
+    <p class="muted" id="txNavHint" style="margin:8px 0 0;font-size:.85rem"></p>
     <div class="row" style="margin-top:10px">
       <button class="btn primary small" type="button" id="txAdd">เพิ่มรายการ</button>
       <span class="muted" id="txHint"></span>
@@ -375,6 +377,10 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     <h3>เงินลงทุน</h3>
       <label class="f">เงินก้อน (บาท)<input type="number" min="0" step="1000" data-p="lump"></label>
       <label class="f">เงิน DCA ต่อเดือน (บาท)<input type="number" min="0" step="500" data-p="monthly"></label>
+      <label class="f">DCA ต่อเนื่องกี่เดือน
+        <input type="number" min="0" max="600" step="1" data-p="dcaMonths">
+        <span class="hint">0 = ใส่ทุกเดือนตลอดระยะลงทุน · ใส่ 12 = DCA ปีแรกปีเดียว แล้วถือยาวจนครบกำหนด</span>
+      </label>
       <label class="f">เงินเฟ้อคาดการณ์ (% ต่อปี)<input type="number" min="0" max="15" step="0.1" data-p="inflation"></label>
   </div>
   <p class="side-note">ค่าเหล่านี้ใช้คัดกรองทุกกอง — แก้แล้วผลคัดกรองอัปเดตทันที</p>
