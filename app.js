@@ -1398,6 +1398,35 @@ function holdingRows(planId){          // planId ว่าง = รวมทุ�
             noPrice: units>0 && !nav};
   }).filter(r=>r.u>0);                  // ถือ 0 หน่วย = ไม่ใช่รายการในพอร์ต
 }
+/* ผลตอบแทนต่อปีที่คิดจังหวะการลงเงิน (XIRR)
+   DCA ทยอยลงเงินคนละเวลา เงินก้อนแรกทำงานมานานกว่าก้อนล่าสุด การเอากำไรหารต้นทุนรวม
+   จึงให้ภาพผิด · หา r ที่ทำให้มูลค่าปัจจุบันของกระแสเงินทั้งหมดเป็นศูนย์ ด้วยวิธีแบ่งครึ่ง
+   ซึ่งลู่เข้าเสมอในช่วงที่กำหนด ต่างจากวิธีนิวตันที่หลุดได้เมื่อกระแสเงินสลับทิศหลายครั้ง */
+function xirr(flows){
+  if (flows.length < 2) return null;
+  const t0 = Math.min(...flows.map(f=>f.d));
+  const yrs = f => (f.d - t0)/(365.25*864e5);
+  const npv = r => flows.reduce((s,f)=>s + f.v/Math.pow(1+r, yrs(f)), 0);
+  if (!(flows.some(f=>f.v>0) && flows.some(f=>f.v<0))) return null;
+  let lo = -0.9999, hi = 10;
+  if (npv(lo)*npv(hi) > 0) return null;          // ไม่มีคำตอบในช่วงนี้
+  for (let i=0; i<200; i++){
+    const mid = (lo+hi)/2;
+    if (npv(lo)*npv(mid) <= 0) hi = mid; else lo = mid;
+  }
+  const r = (lo+hi)/2;
+  return (r > -0.999 && r < 9.99) ? r*100 : null;
+}
+function flowsOf(txs, value){
+  // ซื้อ = เงินออก (ติดลบ) · ขายคืน = เงินเข้า · มูลค่าที่ถืออยู่ = เงินเข้า ณ วันนี้
+  const out = [];
+  for (const t of txs){
+    if (!t.date || !t.amount) return null;       // ไม่มีวันที่หรือไม่ได้กรอกเงิน คำนวณไม่ได้
+    out.push({d: Date.parse(t.date), v: t.kind==='sell' ? t.amount : -t.amount});
+  }
+  if (value) out.push({d: Date.now(), v: value});
+  return out;
+}
 function renderHoldings(){
   if (!$('#holdTable')) return;
   fillPlanSelects();
@@ -1408,15 +1437,22 @@ function renderHoldings(){
   const feeYr = rows.reduce((t,r)=>t+(r.value||0)*num(r.f.ter)/100,0);
   const wTer = totV ? feeYr/totV*100 : 0;
   const scopeName = pfScopeId ? (state.plans.find(x=>x.id===pfScopeId)||{}).name : 'ทุกแผน';
+  const allTx = rows.flatMap(r=>r.txs);
+  const pfFlows = flowsOf(allTx, totV);
+  const pfXirr = pfFlows ? xirr(pfFlows) : null;
+  const undated = allTx.some(t=>!t.date || !t.amount);
 
   $('#pfKpis').innerHTML = [
     ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', rows.length?`${rows.length} กองทุน · ${scopeName}`:'ยังไม่มีรายการซื้อ'],
     ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?'จากราคาที่ซื้อจริงแต่ละครั้ง':'ใส่จำนวนเงินในรายการซื้อ'],
     ['กำไร/ขาดทุน', (totV&&totC)?`${pl>=0?'+':'−'}${fmtB(Math.abs(pl))}`:'—', (totV&&totC)?pct(pl/totC*100,2):''],
-    ['ค่าธรรมเนียมต่อปี (ประมาณ)', totV?fmtB(feeYr):'—', totV?`TER ถ่วงน้ำหนัก ${wTer.toFixed(2)}%`:'']
+    ['ค่าธรรมเนียมต่อปี (ประมาณ)', totV?fmtB(feeYr):'—', totV?`TER ถ่วงน้ำหนัก ${wTer.toFixed(2)}%`:''],
+    ['ผลตอบแทนต่อปี (XIRR)', pfXirr!=null?pct(pfXirr,2):'—',
+      pfXirr!=null ? 'คิดจังหวะที่ลงเงินแต่ละครั้งแล้ว'
+      : undated ? 'ต้องกรอกวันที่และจำนวนเงินให้ครบทุกรายการ' : 'ยังคำนวณไม่ได้']
   ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
 
-  $('#holdTable').innerHTML = rows.length ? `<thead><tr><th>กองทุน</th><th class="num">หน่วย</th><th class="num">ต้นทุนเฉลี่ย</th><th class="num">NAV ล่าสุด</th><th class="num">มูลค่า</th><th class="num">กำไร/ขาดทุน</th><th class="num">สัดส่วน</th></tr></thead><tbody>${
+  $('#holdTable').innerHTML = rows.length ? `<thead><tr><th>กองทุน</th><th class="num">หน่วย</th><th class="num">ต้นทุนเฉลี่ย</th><th class="num">NAV ล่าสุด</th><th class="num">มูลค่า</th><th class="num">กำไร/ขาดทุน</th><th class="num">ต่อปี</th><th class="num">สัดส่วน</th></tr></thead><tbody>${
     rows.map(r=>`<tr>
       <td>${esc(r.f.name)}${r.noPrice?' <span class="tag">ยังไม่มีราคา</span>':''}</td>
       <td class="num">${r.u.toLocaleString('th-TH',{maximumFractionDigits:4})}</td>
@@ -1424,6 +1460,8 @@ function renderHoldings(){
       <td class="num">${r.nav!=null?r.nav.toFixed(4):'—'}</td>
       <td class="num">${r.value!=null?fmtB(r.value):'—'}</td>
       <td class="num" ${r.pl!=null?`style="color:var(${r.pl>=0?'--good':'--bad'})"`:''}>${r.pl!=null?`${r.pl>=0?'+':'−'}${fmtB(Math.abs(r.pl))}`:'—'}</td>
+      <td class="num">${(()=>{ const fl=flowsOf(r.txs, r.value), v=fl?xirr(fl):null;
+        return v!=null ? `<span style="color:var(${v>=0?'--good':'--bad'})">${pct(v,1)}</span>` : '—'; })()}</td>
       <td class="num">${(r.value!=null&&totV)?(r.value/totV*100).toFixed(1)+'%':'—'}</td></tr>`).join('')}</tbody>`
     : '<tbody><tr><td class="muted">ยังไม่มีรายการซื้อ — บันทึกรายการแรกในกล่องด้านล่าง</td></tr></tbody>';
 
