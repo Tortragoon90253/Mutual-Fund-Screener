@@ -40,9 +40,17 @@ const SHARPE_PCT = {
   mixed:[-0.136,0.131,0.534,0.81,1.18,256],         reit:[0.054,0.19,0.358,0.56,0.63,65],
   bond:[-0.114,0.182,0.68,1.782,3.486,90]
 };
+/* alpha = ผลตอบแทนส่วนเกินดัชนีหลังปรับความเสี่ยง · เทียบในกลุ่มเพราะแต่ละสินทรัพย์มีฐานคนละแบบ
+   ข้อมูลจริง ก.ย. 2026: มีเพียง 12.7% ของกองที่ alpha เป็นบวก และกลุ่มหุ้นไทยแม้แต่ p90 ยังติดลบ */
+const ALPHA_PCT = {
+  global_equity:[-9.75,-5.353,-2.405,-0.14,0.27,1140], thai_equity:[-10.0,-5.35,-2.33,-0.8,-0.051,505],
+  mixed:[-7.079,-4.46,-2.425,-0.785,0.206,234],        reit:[-4.84,-4.0,-2.7,-0.85,-0.046,61],
+  bond:[-2.732,-1.228,-0.4,0.133,0.679,78]
+};
 const breaksFor = (tbl, key, ac) => (secStatic && secStatic[key] && secStatic[key][ac]) || tbl[ac] || null;
 const terBreaks = ac => breaksFor(TER_PCT, 'terPct', ac);
 const sharpeBreaks = ac => breaksFor(SHARPE_PCT, 'sharpePct', ac);
+const alphaBreaks  = ac => breaksFor(ALPHA_PCT, 'alphaPct', ac);
 // อันดับในกลุ่มเดียวกัน: 0 = ต่ำสุด, 100 = สูงสุด (รับค่าติดลบได้)
 function pctRank(v, br){
   const pts = [[br[0],10],[br[1],25],[br[2],50],[br[3],75],[br[4],90]];
@@ -98,7 +106,8 @@ const FIELDS = [
     {k:'ret3', l:'กองทุน 3 ปี', t:'number', step:0.01}, {k:'bm3', l:'ดัชนีชี้วัด 3 ปี', t:'number', step:0.01},
     {k:'ret5', l:'กองทุน 5 ปี', t:'number', step:0.01}, {k:'bm5', l:'ดัชนีชี้วัด 5 ปี', t:'number', step:0.01},
     {k:'trackErr', l:'Tracking Error (%) — กองดัชนี', t:'number', step:0.01},
-    {k:'sharpe', l:'Sharpe Ratio', t:'number', step:0.01, hint:'ผลตอบแทนส่วนเพิ่มต่อความเสี่ยง 1 หน่วย — ยิ่งสูงยิ่งดี'}
+    {k:'sharpe', l:'Sharpe Ratio', t:'number', step:0.01, hint:'ผลตอบแทนส่วนเพิ่มต่อความเสี่ยง 1 หน่วย — ยิ่งสูงยิ่งดี'},
+    {k:'alpha', l:'Alpha (% ต่อปี)', t:'number', step:0.01, hint:'ส่วนเกินดัชนีหลังปรับความเสี่ยง — บวกคือผู้จัดการสร้างมูลค่าได้'}
   ]},
   {g:'⑥ ป้องกันความเสี่ยงค่าเงิน', f:[
     {k:'hedge', l:'นโยบาย Hedging', t:'select', o:opts(HEDGE)}
@@ -411,6 +420,14 @@ function evaluate(f, p, w){
       else s = clamp(s + Math.round((rk-50)*0.3), 0, 100);     // มีฐานอยู่แล้ว -> ปรับได้ ±15
       r.push(R(rk>=60?'good':rk>=30?'warn':'bad',
         `Sharpe ${num(f.sharpe)} — ดีกว่า ${Math.round(rk)}% ของกองประเภทเดียวกัน (${a.label} ${sbr[5].toLocaleString()} กอง)`)); }
+    // อัตราชนะรายปีนับ "กี่ครั้ง" แต่ไม่ได้บอก "ชนะเท่าไร" — alpha เติมขนาดของส่วนเกินให้
+    // ปรับได้แค่ ±10 เพราะเป็นเรื่องเดียวกับการชนะดัชนีที่นับไปแล้ว ไม่ควรนับซ้ำเต็มน้ำหนัก
+    const abr = alphaBreaks(f.assetClass);
+    if (has(f.alpha) && abr){
+      const rk = pctRank(num(f.alpha), abr);
+      s = clamp(s + Math.round((rk-50)*0.2), 0, 100);
+      r.push(R(num(f.alpha)>0 ? 'good' : rk>=50 ? 'warn' : 'bad',
+        `Alpha ${num(f.alpha).toFixed(2)}% ต่อปี${num(f.alpha)<0?' (แพ้ดัชนีหลังปรับความเสี่ยง)':''} — ดีกว่า ${Math.round(rk)}% ของ${a.label}`)); }
     if (has(f.ret1) && has(f.ret5) && num(f.ret1)>20 && num(f.ret1)>2*num(f.ret5)) r.push(R('warn','ผลตอบแทนปีล่าสุดสูงกว่าค่าเฉลี่ยระยะยาวมาก — ระวังการซื้อตามกระแส'));
     if (has(f.trackErr) && num(f.trackErr)>1.5){ s-=10; r.push(R('warn',`Tracking Error ${f.trackErr}% ค่อนข้างสูง`)); }
     C('c5', s, r); }
@@ -563,7 +580,7 @@ function fillForm(f){
   $('#btnSave').textContent = f ? 'บันทึกการแก้ไข' : 'บันทึกกองทุน';
 }
 // Fields the SEC data can fill; empty ones are highlighted for manual entry. Inferred ones get a "check" outline.
-const SEC_FILLABLE = ['holdings','top5','riskLevel','maxDD','sd','front','back','ter','ret1','bm1','ret3','bm3','ret5','bm5','sharpe','aum','settle','minBuy'];
+const SEC_FILLABLE = ['holdings','top5','riskLevel','maxDD','sd','front','back','ter','ret1','bm1','ret3','bm3','ret5','bm5','sharpe','alpha','aum','settle','minBuy'];
 const SEC_INFERRED = ['assetClass','region','hedge','minHold'];
 function markSecFields(f){
   const isSec = !!(f && f.sec);
@@ -598,6 +615,7 @@ function portBlock(f){
   const val = v => { const t=String(v ?? '').trim(); return (!t || parseFloat(t)===0) ? '' : t; };
   const bondish = f.assetClass==='bond' || f.assetClass==='money_market';
   const extra = [['อัตราหมุนเวียนการลงทุน (เท่า/ปี)', val(st.portfolio_turnover_ratio), true],
+                 ['Beta เทียบดัชนี', val(st.beta), true],
                  ['ระยะเวลาฟื้นจากขาดทุนสูงสุด', String(st.recovering_period||'').trim(), true],
                  ['อายุเฉลี่ยตราสาร (Duration)', String(st.portfolio_duration_period||'').trim(), bondish],
                  ['Yield to Maturity (%)', val(st.yield_to_maturity), bondish]].filter(x=>x[2] && x[1]);
@@ -707,6 +725,7 @@ async function loadStatic(){
       && v.slice(0,5).every((x,i,arr)=>i===0 || x>=arr[i-1]))) : null;
   j.terPct = breaks(j.terPct, false);
   j.sharpePct = breaks(j.sharpePct, true);
+  j.alphaPct = breaks(j.alphaPct, true);
   // pre-compute a lowercase search string per share class
   const raw = Array.isArray(j.rows) && Array.isArray(j.fields)
     ? j.rows.filter(Array.isArray).map(row=>Object.fromEntries(j.fields.map((k,i)=>[k,row[i]])))

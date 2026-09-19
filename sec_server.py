@@ -353,6 +353,13 @@ def fund_price(rows):
     return out
 
 
+def stat_num(stats, key):
+    """ตัวเลขสถิติที่ใช้ได้จริง — 0 คือช่องที่ไม่ได้กรอก และ 999.99 คือค่าแทน "ไม่ได้คำนวณ"
+    (alpha 19 กอง กับ beta 8 กองรายงานแบบนั้น) ถ้าปล่อยผ่านจะไปบิดจุดตัดเปอร์เซ็นไทล์ของทั้งกลุ่ม"""
+    v = to_num(stats.get(key))
+    return v if v not in (None, 0) and abs(v) < 100 else ""
+
+
 def sharpe_of(stats):
     """Sharpe as a number, or "" when the sheet is really saying "not computed".
     Nine funds report 999.99 and a few report tens; left in, those take the top score outright
@@ -591,6 +598,7 @@ def assemble_fund(profile, cls, raw, notes=None):
         "maxDD": abs(to_num(stats.get("maximum_drawdown"))) if to_num(stats.get("maximum_drawdown")) is not None else "",
         "trackErr": to_num(stats.get("tracking_error")) if to_num(stats.get("tracking_error")) else "",
         "sharpe": sharpe_of(stats),
+        "alpha": stat_num(stats, "alpha"),   # ผลตอบแทนส่วนเกินดัชนีหลังปรับความเสี่ยง
         "hedge": map_hedge(profile, stats, region),
         "dividend": "yes" if pays_div else "no",
         "minHold": min_hold or "",

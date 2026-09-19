@@ -396,7 +396,7 @@ def pct_breaks(amc_files, key, positive_only=True, min_n=30):
             for ac, v in by.items() if ac and len(v) >= min_n}
 
 
-DIAG_FIELDS = ["ter", "riskLevel", "aum", "maxDD", "sd", "sharpe", "trackErr", "ret1", "ret5", "bm5", "holdings"]
+DIAG_FIELDS = ["ter", "riskLevel", "aum", "maxDD", "sd", "sharpe", "alpha", "trackErr", "ret1", "ret5", "bm5", "holdings"]
 
 
 def build_diag(amc_files):
@@ -564,6 +564,7 @@ def main():
         "stats": {"apiCalls": sec.CALLS["network"], "seconds": round(time.time() - started)},
         "terPct": pct_breaks(amc_files, "ter"),          # ค่าธรรมเนียมเทียบในกลุ่มเดียวกัน
         "sharpePct": pct_breaks(amc_files, "sharpe", positive_only=False),  # ผลตอบแทนต่อความเสี่ยง
+        "alphaPct": pct_breaks(amc_files, "alpha", positive_only=False),    # ส่วนเกินดัชนีหลังปรับความเสี่ยง
         "diag": diag,                      # ความครบของข้อมูลรอบนี้
         "diagBest": {k: max(prev_best.get(k, 0), now_filled.get(k, 0))
                      for k in set(prev_best) | set(now_filled)},   # ฐานเทียบกันข้อมูลหาย
