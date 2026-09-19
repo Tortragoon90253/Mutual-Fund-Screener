@@ -1525,7 +1525,7 @@ function fillPlanSelects(){
     ? `กำลังบันทึกเข้าแผน "${scoped.name}" — เลือกได้เฉพาะ ${scoped.fundIds.length} กองที่ออกแบบไว้ในแผนนี้ · เปลี่ยนเป็น "ทุกแผนรวมกัน" ด้านบนเพื่อเลือกกองอื่น`
     : '';
   const del = $('#planDel'); if (del) del.disabled = state.plans.length<2;
-  if (typeof txPriceHint==='function') txPriceHint();
+  if (typeof txPriceHint==='function'){ txPriceHint(); txHoldHint(); }
 }
 function switchPlan(id){
   if (!state.plans.some(pl=>pl.id===id)) return;
@@ -1561,9 +1561,9 @@ function planUI(){
   $('#pfScope') && $('#pfScope').addEventListener('change', e=>{ pfScopeId = e.target.value; renderHoldings(); });
   $('#txAdd') && $('#txAdd').addEventListener('click', addTx);
   ['txAmount','txNav','txUnits'].forEach(id=>$('#'+id) && $('#'+id).addEventListener('input',()=>txFill(id)));
-  $('#txFund') && $('#txFund').addEventListener('change', txPriceHint);
-  $('#txDate') && $('#txDate').addEventListener('change', txPriceHint);
-  fillPlanSelects(); syncProfileInputs(); txPriceHint();
+  ['txFund','txDate'].forEach(id=>$('#'+id) && $('#'+id).addEventListener('change', ()=>{ txPriceHint(); txHoldHint(); }));
+  ['txKind','txPlan'].forEach(id=>$('#'+id) && $('#'+id).addEventListener('change', txHoldHint));
+  fillPlanSelects(); syncProfileInputs(); txPriceHint(); txHoldHint();
 }
 /* จำนวนเงิน = ราคา/หน่วย x จำนวนหน่วย — กรอกสองช่องไหนก็ได้ ช่องที่สามเติมให้
    จำสองช่องที่แตะล่าสุดไว้ เพื่อให้รู้ว่าช่องไหนคือช่องที่ต้องคำนวณ */
@@ -1595,6 +1595,24 @@ function txPriceHint(){
     + (far ? `<br><span style="color:var(--warn)">รายการนี้ลงวันที่ ${esc(d)} ซึ่งห่างจากวันที่ของราคานี้ — ใส่ราคาที่ซื้อจริงจากใบยืนยันจะได้ต้นทุนที่ถูกต้องกว่า</span>` : '');
   $('#txUseNav').addEventListener('click', ()=>{ $('#txNav').value = pr.nav; txFill('txNav'); });
 }
+/* ถือกี่หน่วยอยู่ ณ วันที่ที่กำลังจะบันทึก — ขายย้อนหลังต้องเทียบกับหน่วยที่มี ณ วันนั้น
+   ไม่ใช่หน่วยวันนี้ เพราะรายการที่ซื้อทีหลังยังไม่มีอยู่ตอนที่ขาย */
+function heldAt(planId, fundId, date){
+  return position(state.tx.filter(t=>t.planId===planId && t.fundId===fundId
+    && (!t.date || !date || t.date <= date))).units;
+}
+function txHoldHint(){
+  const box = $('#txHoldNote'); if (!box) return;
+  const kind = $('#txKind') ? $('#txKind').value : 'buy';
+  const fundId = $('#txFund') ? $('#txFund').value : '';
+  const planId = $('#txPlan') ? $('#txPlan').value : '';
+  if (kind !== 'sell' || !fundId || !planId){ box.textContent = ''; return; }
+  const u = heldAt(planId, fundId, $('#txDate') ? $('#txDate').value : '');
+  const nm = (state.funds.find(f=>f.id===fundId) || {name:''}).name.split(' —')[0];
+  box.innerHTML = u > 0
+    ? `ถือ ${esc(nm)} อยู่ <b>${u.toLocaleString('th-TH',{maximumFractionDigits:4})}</b> หน่วยในแผนนี้ ณ วันที่เลือก`
+    : `<span style="color:var(--warn)">ยังไม่มีหน่วยของ ${esc(nm)} ในแผนนี้ ณ วันที่เลือก — ถ้าบันทึกขายไป จะไม่มีอะไรให้ตัด</span>`;
+}
 function addTx(){
   const fundId = $('#txFund').value, planId = $('#txPlan').value;
   let units = cleanNum($('#txUnits').value,0,1e12);
@@ -1606,14 +1624,28 @@ function addTx(){
   if ((units===''||units<=0) && price>0 && amount>0) units = amount/price;
   if ((amount===''||amount<=0) && price>0 && units>0) amount = units*price;
   if (units==='' || units<=0) return hint.textContent = 'ใส่จำนวนหน่วย หรือใส่จำนวนเงินคู่กับราคา/หน่วย';
-  state.tx.push({id:uid(), planId, fundId, kind: $('#txKind').value==='sell'?'sell':'buy',
-                 date: okDate($('#txDate').value) ? $('#txDate').value : '',
+  const kind = $('#txKind').value==='sell' ? 'sell' : 'buy';
+  const date = okDate($('#txDate').value) ? $('#txDate').value : '';
+  // ขายเกินที่ถือแล้วบันทึกเงียบๆ จะได้ตัวเลขที่ดูปกติแต่ผิด — ต้นทุนถูกตัดแค่บางส่วนและ XIRR คำนวณไม่ได้
+  if (kind === 'sell'){
+    const held = heldAt(planId, fundId, date);
+    const nm = (state.funds.find(f=>f.id===fundId) || {name:''}).name.split(' —')[0];
+    const fmtU = u => u.toLocaleString('th-TH',{maximumFractionDigits:4});
+    if (units > held + 1e-6 && !confirm(
+      `${nm} ในแผนนี้ถืออยู่ ${fmtU(held)} หน่วย ณ วันที่ ${date || 'ที่ไม่ได้ระบุ'}\n`
+      + `แต่กำลังบันทึกขาย ${fmtU(units)} หน่วย\n\n`
+      + `โปรแกรมจะตัดได้แค่ ${fmtU(held)} หน่วย ส่วนที่เกินจะถูกละไว้\n`
+      + `ต้นทุนและผลตอบแทนต่อปี (XIRR) จะไม่ตรงกับความจริง\n\nบันทึกต่อหรือไม่?`)) {
+      hint.textContent = 'ยังไม่ได้บันทึก — แก้จำนวนหน่วยแล้วลองใหม่';
+      return; }
+  }
+  state.tx.push({id:uid(), planId, fundId, kind, date,
                  units, amount: amount==='' ? 0 : amount});
   save();
   $('#txUnits').value = ''; $('#txAmount').value = ''; $('#txNav').value = '';
   txTouched = [];
   hint.textContent = 'บันทึกแล้ว';
-  renderHoldings();
+  renderHoldings(); txHoldHint();
 }
 
 /* ============ UI: หน้าแรก — สรุปกองของคุณ ============
@@ -1636,6 +1668,7 @@ function renderHome(){
   const totV = priced.reduce((t,r)=>t+r.value,0);
   const totC = priced.reduce((t,r)=>t+(r.cost||0),0);
   const avg = res.length ? Math.round(res.reduce((t,r)=>t+r.e.total,0)/res.length) : null;
+  const hrz = realisedIn();
   const today = new Date().toISOString().slice(0,10);
   const divs = [];
   state.funds.forEach(f=>((f.sec && f.sec.div && f.sec.div.pays) || []).forEach(([d,v])=>divs.push({f,d,v})));
@@ -1653,7 +1686,12 @@ function renderHome(){
     ['ลงทุนต่อเดือนรวม', ov.totMonthly?fmtB(ov.totMonthly):'—',
       ov.totMonthly ? `${ov.runs.filter(r=>r.contributing).length} จาก ${state.plans.length} แผนยังใส่เงินอยู่` : `${state.plans.length} แผน`],
     ['มูลค่าคาดการณ์รวม', ov.endValue?fmtB(ov.endValue):'—', ov.totMoney?`จะใส่ทั้งหมด ${fmtB(ov.totMoney)}`:'ยังไม่ได้จัดพอร์ต']
-  ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
+  ].concat(hrz.sells
+    // แสดงเฉพาะเมื่อเคยขายคืนจริง — เงินก้อนนี้ไม่อยู่ในกราฟและไม่อยู่ในกำไรของที่ยังถือ
+    ? [['กำไรที่ขายคืนแล้ว', `${hrz.total>=0?'+':'−'}${fmtB(Math.abs(hrz.total))}`,
+        `จาก ${hrz.sells} รายการขาย · ไม่รวมอยู่ในมูลค่าพอร์ต`]]
+    : []
+  ).map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(d)}</div></div>`).join('');
 
   // ต้องดู: ข้อที่ตกเกณฑ์ก่อน แล้วค่อยคำเตือนระดับ bad แล้วจึงขาดทุนจริง
   const al = [];
@@ -1847,14 +1885,31 @@ const priceOf = f => (f.sec && f.sec.price && f.sec.price.nav) || null;
    ขายคืนใช้วิธีต้นทุนเฉลี่ย (ตัดต้นทุนตามราคาเฉลี่ย ณ ตอนขาย ไม่ใช่ตัดด้วยเงินที่ได้รับ)
    จึงต้องเรียงตามวันที่ก่อน — รายการที่ไม่ระบุวันที่ (ยอดยกมา) ถือว่าเก่าที่สุด */
 function position(txs){
-  let units = 0, cost = 0;
+  let units = 0, cost = 0, realised = 0, cut = 0;
   txs.slice().sort((a,b)=>(a.date||'').localeCompare(b.date||'')).forEach(t=>{
     if (t.kind==='sell'){
       const avg = units>0 ? cost/units : 0, u = Math.min(t.units, units);
       units -= u; cost -= u*avg;
+      if (u < t.units) cut++;                       // สั่งขายเกินที่ถือ ตัดได้แค่เท่าที่มี
+      // กำไรที่เกิดขึ้นจริง = เงินที่ได้รับ − ต้นทุนของหน่วยที่ขายไป
+      // เงินที่ได้รับคิดตามสัดส่วนหน่วยที่ขายได้จริง เผื่อกรณีสั่งขายเกินที่ถือ
+      if (t.amount > 0 && u > 0) realised += t.amount*(u/t.units) - u*avg;
     } else { units += t.units; cost += t.amount; }
   });
-  return {units: Math.max(0,units), cost: Math.max(0,cost)};
+  return {units: Math.max(0,units), cost: Math.max(0,cost), realised, cut};
+}
+/* กำไรที่ขายคืนไปแล้ว — ต้องคิดแยกจาก holdingRows() เพราะกองที่ขายหมดแล้วถือ 0 หน่วย
+   holdingRows จะตัดทิ้ง กำไรที่เคยทำได้ก็จะหายไปจากหน้าจอทั้งที่เป็นเงินที่ได้มาจริง */
+function realisedIn(planId){
+  const scope = state.tx.filter(t=>!planId || t.planId===planId);
+  const byFund = {};
+  scope.forEach(t=>{ (byFund[t.fundId] = byFund[t.fundId] || []).push(t); });
+  let total = 0, sells = 0, noAmount = 0;
+  Object.values(byFund).forEach(txs=>{
+    total += position(txs).realised;
+    txs.forEach(t=>{ if (t.kind==='sell'){ sells++; if (!(t.amount>0)) noAmount++; } });
+  });
+  return {total, sells, noAmount};
 }
 /* ---- มูลค่าพอร์ตย้อนหลัง ----
    API ของ ก.ล.ต. ให้ราคาต่อหน่วยเฉพาะราคาล่าสุด ไม่มีราคาย้อนหลังรายวัน
@@ -1989,8 +2044,14 @@ function renderHoldings(){
   const feeYr = priced.reduce((t,r)=>t+r.value*num(r.f.ter)/100,0);
   const wTer = totV ? feeYr/totV*100 : 0;
   const scopeName = pfScopeId ? (state.plans.find(x=>x.id===pfScopeId)||{}).name : 'ทุกแผน';
-  const allTx = priced.flatMap(r=>r.txs);
+  // ต้องเอารายการของกองที่ขายหมดแล้วมาด้วย — holdingRows ตัดกองที่ถือ 0 หน่วยทิ้ง
+  // ถ้าใช้แต่ของที่ยังถืออยู่ พอขายหมดทั้งพอร์ต XIRR จะหายไปทั้งที่นั่นแหละคือตอนที่รู้ผลจริง
+  const allTx = state.tx.filter(t=>{
+    if (pfScopeId && t.planId!==pfScopeId) return false;
+    const f = state.funds.find(x=>x.id===t.fundId);
+    return f && priceOf(f); });
   const darkNote = dark ? ` · ไม่รวม ${dark} กองที่ยังไม่มีราคา` : '';
+  const rz = realisedIn(pfScopeId);
   const pfFlows = flowsOf(allTx, totV);
   const pfXirr = pfFlows ? xirr(pfFlows) : null;
   const undated = allTx.some(t=>!t.date || !t.amount);
@@ -1998,7 +2059,11 @@ function renderHoldings(){
   $('#pfKpis').innerHTML = [
     ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', rows.length?`${priced.length} กองทุน · ${scopeName}${darkNote}`:'ยังไม่มีรายการซื้อ'],
     ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?`จากราคาที่ซื้อจริงแต่ละครั้ง${darkNote}`:'ใส่จำนวนเงินในรายการซื้อ'],
-    ['กำไร/ขาดทุน', (totV&&totC)?`${pl>=0?'+':'−'}${fmtB(Math.abs(pl))}`:'—', (totV&&totC)?pct(pl/totC*100,2):''],
+    ['กำไร/ขาดทุน (ยังถืออยู่)', (totV&&totC)?`${pl>=0?'+':'−'}${fmtB(Math.abs(pl))}`:'—', (totV&&totC)?pct(pl/totC*100,2):''],
+    ['กำไรที่ขายคืนแล้ว', rz.sells ? `${rz.total>=0?'+':'−'}${fmtB(Math.abs(rz.total))}` : '—',
+      !rz.sells ? 'ยังไม่มีรายการขายคืน'
+      : rz.noAmount ? `จาก ${rz.sells} รายการขาย · ${rz.noAmount} รายการไม่ได้กรอกเงินที่ได้รับ จึงยังนับไม่ครบ`
+      : `จาก ${rz.sells} รายการขาย · เงินก้อนนี้ออกจากพอร์ตไปแล้ว จึงไม่อยู่ในกราฟ`],
     ['ค่าธรรมเนียมต่อปี (ประมาณ)', totV?fmtB(feeYr):'—', totV?`TER ถ่วงน้ำหนัก ${wTer.toFixed(2)}%`:''],
     ['ผลตอบแทนต่อปี (XIRR)', pfXirr!=null?pct(pfXirr,2):'—',
       pfXirr!=null ? 'คิดจังหวะที่ลงเงินแต่ละครั้งแล้ว'
