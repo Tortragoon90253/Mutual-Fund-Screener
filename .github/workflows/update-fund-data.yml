@@ -83,6 +83,10 @@ jobs:
         run: |
           mkdir -p _site/vendor
           cp index.html app.js _site/
+          # GitHub Pages ตั้งแคชไว้ 10 นาที ถ้า HTML รุ่นใหม่มาถึงแต่ app.js ยังเป็นของเก่าในแคช
+          # ผู้ใช้จะได้โค้ดสองรุ่นปนกัน — ต่อเลขรุ่นท้ายชื่อไฟล์ให้เบราว์เซอร์รู้ว่าเป็นคนละไฟล์
+          sed -i "s|src=\"app.js\"|src=\"app.js?v=${GITHUB_SHA:0:8}\"|" _site/index.html
+          grep -o 'src="app.js[^"]*"' _site/index.html
           cp vendor/chart.umd.min.js _site/vendor/
           cp -r vendor/fonts _site/vendor/
           if [ -f data-branch/index.json ]; then
