@@ -1331,6 +1331,15 @@ $('#btnExport') && $('#btnExport').addEventListener('click', exportState);
 });
 $('#fileImport') && $('#fileImport').addEventListener('change', e=>{
   const f = e.target.files && e.target.files[0]; if (f) importFrom(f); });
+// <details> ไม่ปิดตัวเองเมื่อคลิกที่อื่น ต้องสั่งเอง ไม่งั้นแผงจะค้างทับเนื้อหา
+document.addEventListener('click', e=>{
+  const m = $('#dataMenu');
+  if (m && m.open && !m.contains(e.target)) m.open = false;
+});
+document.addEventListener('keydown', e=>{
+  const m = $('#dataMenu');
+  if (e.key==='Escape' && m && m.open){ m.open = false; m.querySelector('summary').focus(); }
+});
 
 $('#btnWipe').addEventListener('click', ()=>{
   if (!confirm('ลบข้อมูลโปรไฟล์ กองทุน และพอร์ตทั้งหมดที่เก็บในเบราว์เซอร์นี้? (ควร Export JSON ไว้ก่อนถ้าต้องการเก็บ)')) return;
@@ -1674,8 +1683,11 @@ function renderOverview(){
   const endValue = runs.reduce((t,r)=>t + (r.rows ? r.rows[r.rows.length-1].value : 0), 0);
   const maxY = Math.max(1, ...runs.map(r=>r.left));   // ทุกแผนครบกำหนด -> left เป็น 0 หมด จะหารด้วยศูนย์
 
+  // ราคาต่อหน่วยที่ใช้คำนวณจุดล่าสุดมาจากรอบข้อมูลที่ดึงไว้ ไม่ใช่ราคาเรียลไทม์
+  // ต้องบอกวันที่ของราคาไว้ ไม่งั้นจะเข้าใจว่าเส้นนี้อัปเดตทุกวินาที
+  const navAsOf = state.funds.map(f=>f.sec && f.sec.price && f.sec.price.navDate).filter(Boolean).sort().pop();
   const sub = [];
-  if (act) sub.push('เส้นทึบคือมูลค่าจริงจากรายการซื้อขายของคุณ — ก่อนวันนี้ประมาณจากราคาที่คุณซื้อจริงและราคาล่าสุดจาก ก.ล.ต.');
+  if (act) sub.push(`เส้นทึบคือมูลค่าจริงจากรายการซื้อขายของคุณ${navAsOf?` — คิดด้วยราคาต่อหน่วยของ ก.ล.ต. ณ ${navAsOf}` : ''} · ก่อนวันนี้ประมาณจากราคาที่คุณซื้อจริง`);
   if (series) sub.push(act ? 'ต่อด้วยคาดการณ์กรณีกลางนับจากวันนี้' : 'กรณีกลาง หลังหักค่าธรรมเนียม · ยังไม่มีประวัติซื้อขายพอจะวาดเส้นมูลค่าจริง');
   else sub.push('ยังไม่มีแผนไหนจัดพอร์ต จึงยังไม่มีเส้นคาดการณ์ — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน');
   if (actRaw && actRaw.noPrice.length) sub.push(`ไม่ได้รวม ${actRaw.noPrice.join(', ')} เพราะยังไม่มีราคาต่อหน่วยเลยสักจุด`);
