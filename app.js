@@ -580,7 +580,7 @@ function showSection(sec){
   document.querySelectorAll('.section').forEach(el=>el.classList.toggle('active', el.id==='section-'+sec));
   try{ localStorage.setItem(KEY+'.sec', sec); }catch(e){}
   if (sec==='port') renderHoldings();
-  if (sec==='home') renderHome();
+  if (sec==='home') renderHome(); else stopPulse();
 }
 
 document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
@@ -712,6 +712,78 @@ function drawPort(id){
   const f = state.funds.find(x=>x.id===id);
   drawDonut('port_'+id, f && f.sec && f.sec.alloc);
 }
+/* ---- จุดชีพจรที่ปลายเส้นมูลค่าจริง ----
+   เส้นมูลค่าจริงหยุดที่วันนี้ ซึ่งดูเหมือนข้อมูลขาดได้ จุดที่เต้นอยู่บอกว่าปลายนี้คือ "ตอนนี้"
+   วาดบนผืนผ้าใบซ้อนแยกต่างหาก ถ้าไปวาดในกราฟจะต้องสั่ง Chart.js เรนเดอร์ใหม่ทั้ง 350 จุดทุกเฟรม
+   เคารพ prefers-reduced-motion — คนที่ตั้งค่าไว้ว่าไม่เอาภาพเคลื่อนไหวจะได้จุดนิ่งๆ แทน */
+const PULSE_MS = 1700;
+let pulseRAF = null, pulseCtx = null;
+
+function pulseTarget(chartId, label){
+  const chart = charts[chartId];
+  if (!chart) return null;
+  const di = chart.data.datasets.findIndex(d => d.label === label);
+  if (di < 0) return null;
+  const meta = chart.getDatasetMeta(di);
+  if (!meta || meta.hidden) return null;
+  const data = chart.data.datasets[di].data;
+  let i = data.length - 1;
+  while (i >= 0 && data[i] == null) i--;
+  const el = i >= 0 && meta.data[i];
+  if (!el || !isFinite(el.x) || !isFinite(el.y)) return null;
+  return {x: el.x, y: el.y, color: chart.data.datasets[di].borderColor};
+}
+
+function drawPulse(cv, chartId, label, phase){
+  const box = cv.parentElement;
+  // กราฟที่ไม่ได้อยู่บนจอ (คนละแท็บ/ส่วน) ไม่มีขนาด จึงวาดไม่ได้และไม่ต้องวาด
+  if (!box || !box.clientWidth || !box.offsetParent) return false;
+  const dpr = window.devicePixelRatio || 1;
+  const w = box.clientWidth, h = box.clientHeight;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+    cv.style.width = w+'px'; cv.style.height = h+'px';
+    pulseCtx = null;
+  }
+  const ctx = pulseCtx || (pulseCtx = cv.getContext('2d'));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const t = pulseTarget(chartId, label);
+  if (!t) return false;
+  if (phase != null){
+    const ease = 1 - Math.pow(1 - phase, 2);          // ขยายเร็วตอนต้นแล้วค่อยๆ ช้าลง เหมือนคลื่นจริง
+    // ความจางต้องไล่ตามเฟสตรงๆ ไม่ใช่ตาม ease — ไม่งั้นวงจะจางหมดตั้งแต่ยังเล็ก แล้วมองไม่เห็นว่าขยาย
+    ctx.globalAlpha = 0.45 * (1 - phase);
+    ctx.beginPath(); ctx.arc(t.x, t.y, 4 + ease*14, 0, Math.PI*2);
+    ctx.fillStyle = t.color; ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.arc(t.x, t.y, 4, 0, Math.PI*2);
+  ctx.fillStyle = t.color; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = css('--surface'); ctx.stroke();
+  return true;
+}
+
+function stopPulse(){
+  if (pulseRAF){ cancelAnimationFrame(pulseRAF); pulseRAF = null; }
+  const cv = $('#ovPulse');
+  if (cv && cv.width) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+}
+
+function startPulse(){
+  stopPulse();
+  const cv = $('#ovPulse'); if (!cv) return;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still){ drawPulse(cv, 'ovChart', 'มูลค่าจริง', null); return; }
+  const step = () => {
+    const alive = drawPulse(cv, 'ovChart', 'มูลค่าจริง', (performance.now() % PULSE_MS) / PULSE_MS);
+    pulseRAF = alive ? requestAnimationFrame(step) : null;
+  };
+  step();
+}
+// ขนาดกราฟเปลี่ยนแล้วจุดต้องย้ายตาม — โหมดเคลื่อนไหวจะตามเองอยู่แล้วทุกเฟรม เหลือแค่โหมดจุดนิ่ง
+addEventListener('resize', ()=>{ if (!pulseRAF && $('#ovPulse')) startPulse(); });
+
 function drawDonut(canvasId, rows){
   if (!rows || !rows.length || !document.getElementById(canvasId)) return;
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
@@ -1760,7 +1832,9 @@ function renderOverview(){
                 y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
         plugins:{legend:{position:'bottom'},
           tooltip:{callbacks:{label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
-  } else if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; }
+    // ต้องรอให้ Chart.js วาดจบก่อน ถึงจะรู้พิกัดของจุดสุดท้าย
+    if (past.length) setTimeout(startPulse, 0); else stopPulse();
+  } else { stopPulse(); if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; } }
 
   return {runs, series, act, actRaw, totMonthly, totMoney, endValue, byFund, placed};
 }
