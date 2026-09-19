@@ -174,16 +174,26 @@ def recover_per_fund(path, label, profiles):
     if not probe:
         warn(f"{label}: ดึงรายกองก็ไม่ได้ข้อมูล — ตารางฝั่ง ก.ล.ต. ไม่มีข้อมูลในตอนนี้")
         return []
-    log(f"  {label}: ดึงแบบรวมไม่ได้ แต่รายกองได้ — ไล่ทีละกอง {len(ids):,} กอง")
-    rows, started, spent = list(probe), time.time(), 1
-    for pid in ids[1:]:
+    log(f"  {label}: ดึงแบบรวมไม่ได้ แต่รายกองได้ — ไล่ทีละกอง {len(ids):,} กอง (พร้อมกัน {WORKERS} สาย)")
+    rows, started, spent, capped = list(probe), time.time(), 1, False
+
+    def one(pid):
+        # เพดานทั้งสองตัวอ่านค่าที่แชร์กัน อ่านพลาดไปหนึ่งครั้งไม่เป็นไร เพราะ fetch_all กันงบซ้ำอยู่แล้ว
         if spent >= PER_FUND_MAX_CALLS or sec.CALLS["network"] >= MAX_CALLS:
-            warn(f"{label}: ไล่รายกองได้ {spent:,} กองแล้วชนเพดาน — ข้อมูลไม่ครบทุกกอง")
-            break
-        rows.extend(fetch_all(path, {"proj_id": pid, "latest": "true"}, retry_empty=False, quiet=True))
-        spent += 1
-        if spent % 250 == 0:
-            log(f"    …{spent:,}/{len(ids):,} กอง · {len(rows):,} แถว")
+            return None
+        return fetch_all(path, {"proj_id": pid, "latest": "true"}, retry_empty=False, quiet=True)
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for got in pool.map(one, ids[1:]):
+            if got is None:
+                capped = True
+                continue
+            rows.extend(got)
+            spent += 1
+            if spent % 250 == 0:
+                log(f"    …{spent:,}/{len(ids):,} กอง · {len(rows):,} แถว")
+    if capped:
+        warn(f"{label}: ไล่รายกองได้ {spent:,} กองแล้วชนเพดาน — ข้อมูลไม่ครบทุกกอง")
     log(f"  {label}: รายกองรวม {len(rows):,} แถว จาก {spent:,} กอง ({time.time() - started:.0f} วินาที)")
     return rows
 
