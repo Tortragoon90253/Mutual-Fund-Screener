@@ -195,6 +195,16 @@ function cleanEnum(v, allowed, dflt){ return allowed.includes(String(v)) ? Strin
 // .test() แปลงค่าเป็นสตริงก่อน ทำให้ undefined กลายเป็น "undefined" ซึ่งตรงรูปแบบพอดี
 // แล้วคืนค่า undefined กลับไปเป็น id — ต้องเช็คชนิดก่อน
 function cleanId(v){ return typeof v==='string' && /^[a-z0-9]{4,16}$/.test(v) ? v : uid(); }
+/* วันที่ต้องมีอยู่จริงและอยู่ในช่วงที่เป็นไปได้
+   "2025-02-31" ผ่าน regex แต่ Date.parse เลื่อนไปเป็น 3 มี.ค. เงียบๆ
+   และปีที่พิมพ์ผิดเป็น 1025 ทำให้กราฟมูลค่าย้อนหลังลากยาวเป็นพันจุดจนใช้ไม่ได้ */
+function okDate(d){
+  if (typeof d!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const t = new Date(d+'T00:00:00Z');
+  return !isNaN(t) && t.toISOString().slice(0,10)===d
+      // เผื่อถึง 10 ปีข้างหน้า เพราะตั้งวันเริ่มแผนล่วงหน้าได้ แต่ยังกันปีพิมพ์ผิดแบบ 2099 หรือ 9999
+      && d >= '1990-01-01' && d <= (new Date().getUTCFullYear()+10) + '-12-31';
+}
 function sanitizeFund(f){
   if (!f || typeof f!=='object') return null;
   const out = {};
@@ -264,7 +274,7 @@ function sanitizePlan(raw, fundIds){
     : [...fundIds];
   return {
     id: cleanId(r.id), name: cleanStr(r.name,40) || 'แผนหลัก', fundIds: ids,
-    startDate: /^\d{4}-\d{2}-\d{2}$/.test(r.startDate) ? r.startDate : '',
+    startDate: okDate(r.startDate) ? r.startDate : '',
     profile:{
       goal: cleanEnum(p.goal, ['wealth','retire','income','tax','short'], d.goal),
       years: cleanNum(p.years,1,50) || d.years,
@@ -287,7 +297,7 @@ function sanitizeTx(t, fundIds, planIds){
   if (units==='' || units<=0) return null;
   const amount = cleanNum(t.amount,0,1e12);
   return {id: cleanId(t.id), planId, fundId, kind: t.kind==='sell' ? 'sell' : 'buy',
-          date: /^\d{4}-\d{2}-\d{2}$/.test(t.date) ? t.date : '',
+          date: okDate(t.date) ? t.date : '',
           units, amount: amount==='' ? 0 : amount};
 }
 function sanitizeState(s){
@@ -888,11 +898,13 @@ async function autoSyncFunds(){
   const moved = [], failed = [];
   let done = 0;
   await Promise.all(stale.map(async f=>{
-    const i = state.funds.indexOf(f);
     try{
       const fresh = await staticFund(f.sec.projId, f.sec.cls);
       const merged = mergeFund(f, fresh);
       if (!merged) throw new Error('ข้อมูลที่ได้มาไม่ครบ');
+      // หาดัชนีหลัง await ไม่ใช่ก่อน — ระหว่างรอ ผู้ใช้อาจลบกองอื่นจนดัชนีเลื่อน
+      const i = state.funds.findIndex(x=>x.id===f.id);
+      if (i<0) return;                              // กองนี้ถูกลบไประหว่างรอ
       const before = priceOf(f), after = priceOf(merged);
       state.funds[i] = merged; done++;
       if (before!=null && after!=null && after!==before) moved.push({n:nameOf(f), before, after});
@@ -1092,10 +1104,14 @@ $('#recoBox').addEventListener('click', e=>{
 $('#fundList').addEventListener('click', async e=>{
   const rf = e.target.dataset.refresh;
   if (rf){
-    const i = state.funds.findIndex(x=>x.id===rf), old = state.funds[i];
+    const old = state.funds.find(x=>x.id===rf);
+    if (!old) return;
     e.target.disabled = true; e.target.textContent = 'กำลังอัปเดต…';
     try{
       const fund = await secFetchFund(old.sec.projId, old.sec.cls);
+      // หาดัชนีหลัง await โหมด live รอหลายวินาที ผู้ใช้ลบกองอื่นทันจนดัชนีเลื่อนได้
+      const i = state.funds.findIndex(x=>x.id===rf);
+      if (i<0) return;
       state.funds[i] = mergeFund(old, fund) || old;
       save(); renderFunds();
     }catch(err){ alert('อัปเดตไม่สำเร็จ: '+err.message); renderFunds(); }
@@ -1235,6 +1251,7 @@ function fillPlanSelects(){
       || '<option value="">— ยังไม่มีกองทุน —</option>';
     if (state.funds.some(f=>f.id===cur)) tf.value = cur; }
   const del = $('#planDel'); if (del) del.disabled = state.plans.length<2;
+  if (typeof txPriceHint==='function') txPriceHint();
 }
 function switchPlan(id){
   if (!state.plans.some(pl=>pl.id===id)) return;
@@ -1249,7 +1266,7 @@ function planUI(){
   $('#planName').addEventListener('input', e=>{
     activePlan().name = cleanStr(e.target.value,40) || 'แผนไม่มีชื่อ'; save(); fillPlanSelects(); });
   $('#planStart').addEventListener('change', e=>{
-    activePlan().startDate = /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) ? e.target.value : '';
+    activePlan().startDate = okDate(e.target.value) ? e.target.value : '';
     save(); if ($('#section-home').classList.contains('active')) renderHome(); });
   $('#planNew').addEventListener('click', ()=>{
     const pl = freshPlan('แผนที่ ' + (state.plans.length+1));
@@ -1316,7 +1333,7 @@ function addTx(){
   if ((amount===''||amount<=0) && price>0 && units>0) amount = units*price;
   if (units==='' || units<=0) return hint.textContent = 'ใส่จำนวนหน่วย หรือใส่จำนวนเงินคู่กับราคา/หน่วย';
   state.tx.push({id:uid(), planId, fundId, kind: $('#txKind').value==='sell'?'sell':'buy',
-                 date: /^\d{4}-\d{2}-\d{2}$/.test($('#txDate').value) ? $('#txDate').value : '',
+                 date: okDate($('#txDate').value) ? $('#txDate').value : '',
                  units, amount: amount==='' ? 0 : amount});
   save();
   $('#txUnits').value = ''; $('#txAmount').value = ''; $('#txNav').value = '';
@@ -1337,8 +1354,13 @@ function renderHome(){
   const many = state.plans.length>1;
   const ov = renderOverview() || {runs:[], totMonthly:0, totMoney:0, endValue:0, byFund:{}, placed:0};
   const rows = holdingRows(), held = rows;   // หน้าแรกดูรวมทุกแผน
-  const totV = held.reduce((t,r)=>t+(r.value||0),0);
-  const totC = held.reduce((t,r)=>t+(r.cost||0),0);
+  /* กองที่ยังไม่มีราคาต่อหน่วยคิดมูลค่าไม่ได้ แต่ต้นทุนของมันรู้อยู่แล้ว
+     ถ้านับต้นทุนฝ่ายเดียว กำไร/ขาดทุนจะกลายเป็นขาดทุนเท่ากับต้นทุนของกองนั้นทั้งก้อน
+     ทั้งที่ยังไม่ได้ขาดทุนอะไรเลย — จึงต้องตัดออกทั้งสองฝ่ายแล้วบอกว่าตัดไปกี่กอง */
+  const priced = held.filter(r=>r.value!=null);
+  const dark = held.length - priced.length;
+  const totV = priced.reduce((t,r)=>t+r.value,0);
+  const totC = priced.reduce((t,r)=>t+(r.cost||0),0);
   const avg = res.length ? Math.round(res.reduce((t,r)=>t+r.e.total,0)/res.length) : null;
   const today = new Date().toISOString().slice(0,10);
   const divs = [];
@@ -1347,7 +1369,10 @@ function renderHome(){
   const upcoming = divs.filter(x=>x.d>=today);
 
   $('#homeKpis').innerHTML = [
-    ['มูลค่าพอร์ต', totV?fmtB(totV):'—', totV&&totC?`${totV>=totC?'+':'−'}${fmtB(Math.abs(totV-totC))} (${pct((totV-totC)/totC*100,2)})`:'กรอกจำนวนหน่วยในหน้าพอร์ต'],
+    ['มูลค่าพอร์ต', totV?fmtB(totV):'—',
+      totV&&totC ? `${totV>=totC?'+':'−'}${fmtB(Math.abs(totV-totC))} (${pct((totV-totC)/totC*100,2)})${dark?` · ไม่รวม ${dark} กองที่ยังไม่มีราคา`:''}`
+      : totV ? 'ยังไม่ได้กรอกจำนวนเงินที่ซื้อ จึงยังไม่รู้กำไร/ขาดทุน'
+      : 'กรอกรายการซื้อขายในหน้าพอร์ต'],
     ['กองที่ติดตาม', String(uniqueFunds), res.filter(r=>!r.e.pass).length?`ไม่ผ่านเกณฑ์ ${res.filter(r=>!r.e.pass).length} รายการ`:'ผ่านเกณฑ์ทุกกอง'],
     ['คะแนนเฉลี่ย', avg!=null?String(avg):'—', avg!=null?'ตามโปรไฟล์ปัจจุบัน':''],
     ['ปันผลที่จะถึง', upcoming.length?String(upcoming.length):'—', upcoming.length?`รายการถัดไป ${upcoming.at(-1).d}`:'ไม่มีรายการที่ประกาศไว้'],
@@ -1365,7 +1390,10 @@ function renderHome(){
   });
   held.filter(r=>r.pl!=null && r.pl<0).forEach(r=>
     al.push([2,'warn',`${r.f.name.split(' —')[0]}: ขาดทุน ${fmtB(Math.abs(r.pl))} (${pct(r.pl/r.cost*100,1)})`]));
-  rows.filter(r=>r.noPrice).length && al.push([3,'', `${rows.filter(r=>r.noPrice).length} กองยังไม่มีราคาต่อหน่วย — กด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
+  rows.filter(r=>r.noPrice).length && al.push([3,'', `${rows.filter(r=>r.noPrice).length} กองยังไม่มีราคาต่อหน่วย จึงไม่ถูกนับเข้ามูลค่าพอร์ตและกราฟ — กด "อัปเดตจาก ก.ล.ต." ในการ์ดกองนั้น`]);
+  // ถือหน่วยอยู่แต่ไม่รู้ว่าจ่ายไปเท่าไหร่ — กำไร/ขาดทุนและเส้นเงินที่ใส่ไปจะผิด ถ้าไม่บอกก็ดูไม่ออก
+  const noCost = rows.filter(r=>r.u>0 && !r.cost);
+  noCost.length && al.push([2,'warn', `${noCost.map(r=>r.f.name.split(' —')[0]).join(', ')}: กรอกแต่จำนวนหน่วย ยังไม่ได้กรอกจำนวนเงิน — ต้นทุนและกำไร/ขาดทุนของกองนี้จึงคำนวณไม่ได้`]);
 
   // สิ่งที่มองไม่เห็นตอนดูทีละแผน — ต้องรวมทุกแผนถึงจะเห็น
   if (ov.placed){
@@ -1428,18 +1456,22 @@ function renderHome(){
 function renderOverview(){
   if (!$('#ovPlans')) return;
   const runs = allPlanRuns(), series = combinedSeries(runs);
-  const act = actualSeries();                       // มูลค่าจริงย้อนหลัง รวมทุกแผน
+  const actRaw = actualSeries();                    // มูลค่าจริงย้อนหลัง รวมทุกแผน
+  // จุดเดียวไม่ใช่ประวัติ — เกิดตอนซื้อครั้งแรกเป็นวันนี้ หรือรายการทั้งหมดลงวันที่ในอนาคต
+  // ถ้าปล่อยผ่าน เส้นคาดการณ์จะถูกตรึงให้เริ่มที่ 0 แล้วกระโดดขึ้นในเดือนถัดไป
+  const act = (actRaw && actRaw.length>1) ? actRaw : null;
   // แผนที่หน้าต่าง DCA หมดแล้วไม่ต้องใส่เงินอีก จึงไม่นับเข้าภาระต่อเดือน
   const totMonthly = runs.filter(r=>r.contributing).reduce((t,r)=>t+r.monthly, 0);
   const totMoney = runs.reduce((t,r)=>t+r.money, 0);
   const endValue = runs.reduce((t,r)=>t + (r.rows ? r.rows[r.rows.length-1].value : 0), 0);
-  const maxY = runs.length ? Math.max(...runs.map(r=>r.left)) : 1;
+  const maxY = Math.max(1, ...runs.map(r=>r.left));   // ทุกแผนครบกำหนด -> left เป็น 0 หมด จะหารด้วยศูนย์
 
-  $('#ovSub').textContent = series
-    ? (act
-        ? 'เส้นทึบคือมูลค่าจริงจากรายการซื้อขายของคุณ ต่อด้วยคาดการณ์กรณีกลางนับจากวันนี้ — มูลค่าจริงก่อนวันนี้ประมาณจากราคาที่คุณซื้อจริงและราคาล่าสุดจาก ก.ล.ต.'
-        : 'กรณีกลาง หลังหักค่าธรรมเนียม · ยังไม่มีรายการซื้อ จึงคิดจากแผนที่ตั้งไว้')
-    : 'ยังไม่มีแผนไหนจัดพอร์ต — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน';
+  const sub = [];
+  if (act) sub.push('เส้นทึบคือมูลค่าจริงจากรายการซื้อขายของคุณ — ก่อนวันนี้ประมาณจากราคาที่คุณซื้อจริงและราคาล่าสุดจาก ก.ล.ต.');
+  if (series) sub.push(act ? 'ต่อด้วยคาดการณ์กรณีกลางนับจากวันนี้' : 'กรณีกลาง หลังหักค่าธรรมเนียม · ยังไม่มีประวัติซื้อขายพอจะวาดเส้นมูลค่าจริง');
+  else sub.push('ยังไม่มีแผนไหนจัดพอร์ต จึงยังไม่มีเส้นคาดการณ์ — เลือกกองและกำหนดสัดส่วนในแท็บ ② ของหน้าวางแผนลงทุน');
+  if (actRaw && actRaw.noPrice.length) sub.push(`ไม่ได้รวม ${actRaw.noPrice.join(', ')} เพราะยังไม่มีราคาต่อหน่วยเลยสักจุด`);
+  $('#ovSub').textContent = sub.join(' · ');
 
   const order = [...runs].sort((a,b)=>a.left-b.left);
   $('#ovPlans').innerHTML = `<thead><tr><th>แผน</th><th>รูปแบบ</th><th class="num">ปี</th><th class="num">เหลือ</th><th class="num">ต่อเดือน</th><th>ช่วงเวลา</th><th class="num">มีจริงตอนนี้</th><th>เริ่ม → ครบ</th><th class="num">เทียบกับแผน</th><th class="num">จะใส่อีก</th><th class="num">คาดการณ์</th></tr></thead><tbody>${
@@ -1479,7 +1511,7 @@ function renderOverview(){
     || '<li class="muted">ยังไม่มีแผนไหนจัดพอร์ต</li>';
   drawDonut('ovAlloc', slices);
 
-  if (series){
+  if (series || act){
     const C = {real:css('--accent'), line:css('--c-good'), put:css('--c-principal'), grid:css('--grid')};
     Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
     Chart.defaults.color = css('--muted');
@@ -1487,19 +1519,20 @@ function renderOverview(){
     const past = act || [];
     const t0 = new Date(todayISO()+'T00:00:00Z');
     const futIso = m => new Date(Date.UTC(t0.getUTCFullYear(), t0.getUTCMonth()+m, 1)).toISOString().slice(0,10);
-    const futLab = series.map((r,m)=>monLabel(futIso(m)));
+    const futLab = series ? series.map((r,m)=>monLabel(futIso(m))) : [];
     const labels = past.length ? past.map(r=>monLabel(r.date)).concat(futLab.slice(1)) : futLab;
     const gap = n => Array(Math.max(0,n)).fill(null);
-    const ds = [
-      {label:'มูลค่าคาดการณ์',
+    const ds = [];
+    if (past.length) ds.push({label:'มูลค่าจริง', data: past.map(r=>r.value).concat(gap(labels.length-past.length)),
+       borderColor:C.real, backgroundColor:C.real+'22', fill:true, tension:.15, pointRadius:0, borderWidth:2.6});
+    if (series) ds.push({label:'มูลค่าคาดการณ์',
        data: past.length ? gap(past.length-1).concat([past[past.length-1].value], series.slice(1).map(r=>r.value))
                          : series.map(r=>r.value),
-       borderColor:C.line, backgroundColor:C.line+'22', fill:!past.length, tension:.25, pointRadius:0, borderWidth:2.4, borderDash:past.length?[6,4]:[]},
-      {label:'เงินที่ใส่ไปสะสม',
-       data: past.length ? past.map(r=>r.cost).concat(series.slice(1).map(r=>r.principal)) : series.map(r=>r.principal),
-       borderColor:C.put, borderDash:[5,4], fill:false, tension:0, pointRadius:0, borderWidth:2}];
-    if (past.length>1) ds.unshift({label:'มูลค่าจริง', data: past.map(r=>r.value).concat(gap(labels.length-past.length)),
-       borderColor:C.real, backgroundColor:C.real+'22', fill:true, tension:.15, pointRadius:0, borderWidth:2.6});
+       borderColor:C.line, backgroundColor:C.line+'22', fill:!past.length, tension:.25, pointRadius:0, borderWidth:2.4, borderDash:past.length?[6,4]:[]});
+    ds.push({label:'เงินที่ใส่ไปสะสม',
+       data: past.length ? past.map(r=>r.cost).concat(series ? series.slice(1).map(r=>r.principal) : [])
+                         : series.map(r=>r.principal),
+       borderColor:C.put, borderDash:[5,4], fill:false, tension:0, pointRadius:0, borderWidth:2});
     draw('ovChart', {type:'line',
       data:{labels, datasets:ds},
       options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
@@ -1509,7 +1542,7 @@ function renderOverview(){
           tooltip:{callbacks:{label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
   } else if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; }
 
-  return {runs, series, act, totMonthly, totMoney, endValue, byFund, placed};
+  return {runs, series, act, actRaw, totMonthly, totMoney, endValue, byFund, placed};
 }
 
 /* ============ UI: พอร์ตของฉัน ============
@@ -1558,26 +1591,51 @@ function actualSeries(planId){
   const today = todayISO();
   const dated = scope.filter(t=>t.date).map(t=>t.date).sort();
   const start = dated.length ? dated[0] : today;
+  const nameOf = id => { const f = state.funds.find(x=>x.id===id); return f ? f.name.split(' —')[0] : id; };
   const byFund = {}, tl = {};
   scope.forEach(t=>{ (byFund[t.fundId] = byFund[t.fundId] || []).push(t); });
-  Object.keys(byFund).forEach(id=>{ tl[id] = navTimeline(id); });
-  const d0 = new Date(start+'T00:00:00Z');
+  // เกณฑ์เดียวกับหน้าพอร์ตและ KPI คือ "มีราคาต่อหน่วยจาก ก.ล.ต. หรือไม่" ไม่ใช่ "มีจุดราคาอะไรก็ได้"
+  // ถ้ากราฟใช้ราคาที่ผู้ใช้ซื้อแทนสำหรับกองที่ยังไม่มีราคา ปลายกราฟจะไม่ตรงกับตัวเลขมูลค่าพอร์ตข้างบน
+  const noPrice = [];
+  Object.keys(byFund).forEach(id=>{
+    const f = state.funds.find(x=>x.id===id);
+    if (f && priceOf(f)) tl[id] = navTimeline(id);
+    else { delete byFund[id]; noPrice.push(nameOf(id)); }
+  });
+  const ids = Object.keys(byFund);
+  if (!ids.length) return null;
+  const d0 = new Date(start+'T00:00:00Z'), anchor = d0.getUTCDate();
+  // ก้าวทีละเดือนโดยวันที่ต้องไม่ล้น — 31 ม.ค. บวกหนึ่งเดือนคือ 28 ก.พ. ไม่ใช่ 3 มี.ค.
+  // ถ้าปล่อยให้ล้น ลำดับเดือนจะข้าม ก.พ. กับ เม.ย. ไปทั้งเดือน
+  const stepIso = m => {
+    const y = d0.getUTCFullYear(), mo = d0.getUTCMonth()+m;
+    const last = new Date(Date.UTC(y, mo+1, 0)).getUTCDate();
+    return new Date(Date.UTC(y, mo, Math.min(anchor, last))).toISOString().slice(0,10);
+  };
   const out = [];
   for (let m=0; m<=1200; m++){
-    const iso = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth()+m, d0.getUTCDate())).toISOString().slice(0,10);
+    const iso = stepIso(m);
     const cur = iso > today ? today : iso;
-    let value = 0, cost = 0, priced = true;
-    Object.keys(byFund).forEach(id=>{
+    let value = 0, cost = 0;
+    ids.forEach(id=>{
       const pos = position(byFund[id].filter(t=>!t.date || t.date<=cur));
       if (!pos.units) return;
-      const nav = navAt(tl[id], cur);
-      if (nav==null) priced = false; else value += pos.units*nav;
+      // จุดสุดท้าย (วันนี้) ต้องใช้ราคาตัวเดียวกับที่หน้าพอร์ตและ KPI ใช้ ไม่งั้นปลายกราฟกับตัวเลขข้างบนจะไม่ตรงกัน
+      // เกิดได้เมื่อคุณซื้อวันนี้แล้วราคาที่ซื้อใหม่กว่าราคาที่ ก.ล.ต. เผยแพร่
+      const f = cur===today && state.funds.find(x=>x.id===id);
+      const nav = (f && priceOf(f)) || navAt(tl[id], cur);
+      value += pos.units*nav;
       cost += pos.cost;
     });
-    out.push({date:cur, value, cost, priced});
+    out.push({date:cur, value, cost});
     if (iso >= today) break;
   }
-  return out.length ? out : null;
+  if (!out.length) return null;
+  // ถือหน่วยอยู่แต่ต้นทุนเป็น 0 = กรอกแต่จำนวนหน่วย ไม่ได้กรอกจำนวนเงิน
+  // เส้น "เงินที่ใส่ไปสะสม" จะต่ำกว่าความจริง จนดูเหมือนกำไรงอกมาจากศูนย์
+  out.noPrice = noPrice;
+  out.noCost = ids.filter(id=>{ const pos = position(byFund[id]); return pos.units>0 && !(pos.cost>0); }).map(nameOf);
+  return out;
 }
 
 function holdingRows(planId){          // planId ว่าง = รวมทุกแผน
@@ -1626,20 +1684,26 @@ function renderHoldings(){
   if (!$('#holdTable')) return;
   fillPlanSelects();
   const rows = holdingRows(pfScopeId);
-  const totV = rows.reduce((t,r)=>t+(r.value||0),0);
-  const totC = rows.reduce((t,r)=>t+(r.cost||0),0);
+  /* กองที่ยังไม่มีราคาต่อหน่วยคิดมูลค่าไม่ได้ แต่ต้นทุนของมันรู้อยู่แล้ว
+     ถ้านับต้นทุนฝ่ายเดียว กำไร/ขาดทุนจะกลายเป็นขาดทุนเท่ากับต้นทุนของกองนั้นทั้งก้อน
+     ทั้งที่ยังไม่ได้ขาดทุนอะไรเลย — จึงต้องตัดออกทั้งสองฝ่ายแล้วบอกว่าตัดไปกี่กอง */
+  const priced = rows.filter(r=>r.value!=null);
+  const dark = rows.length - priced.length;
+  const totV = priced.reduce((t,r)=>t+r.value,0);
+  const totC = priced.reduce((t,r)=>t+(r.cost||0),0);
   const pl = totV && totC ? totV-totC : 0;
-  const feeYr = rows.reduce((t,r)=>t+(r.value||0)*num(r.f.ter)/100,0);
+  const feeYr = priced.reduce((t,r)=>t+r.value*num(r.f.ter)/100,0);
   const wTer = totV ? feeYr/totV*100 : 0;
   const scopeName = pfScopeId ? (state.plans.find(x=>x.id===pfScopeId)||{}).name : 'ทุกแผน';
-  const allTx = rows.flatMap(r=>r.txs);
+  const allTx = priced.flatMap(r=>r.txs);
+  const darkNote = dark ? ` · ไม่รวม ${dark} กองที่ยังไม่มีราคา` : '';
   const pfFlows = flowsOf(allTx, totV);
   const pfXirr = pfFlows ? xirr(pfFlows) : null;
   const undated = allTx.some(t=>!t.date || !t.amount);
 
   $('#pfKpis').innerHTML = [
-    ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', rows.length?`${rows.length} กองทุน · ${scopeName}`:'ยังไม่มีรายการซื้อ'],
-    ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?'จากราคาที่ซื้อจริงแต่ละครั้ง':'ใส่จำนวนเงินในรายการซื้อ'],
+    ['มูลค่าปัจจุบัน', totV?fmtB(totV):'—', rows.length?`${priced.length} กองทุน · ${scopeName}${darkNote}`:'ยังไม่มีรายการซื้อ'],
+    ['ต้นทุนรวม', totC?fmtB(totC):'—', totC?`จากราคาที่ซื้อจริงแต่ละครั้ง${darkNote}`:'ใส่จำนวนเงินในรายการซื้อ'],
     ['กำไร/ขาดทุน', (totV&&totC)?`${pl>=0?'+':'−'}${fmtB(Math.abs(pl))}`:'—', (totV&&totC)?pct(pl/totC*100,2):''],
     ['ค่าธรรมเนียมต่อปี (ประมาณ)', totV?fmtB(feeYr):'—', totV?`TER ถ่วงน้ำหนัก ${wTer.toFixed(2)}%`:''],
     ['ผลตอบแทนต่อปี (XIRR)', pfXirr!=null?pct(pfXirr,2):'—',
