@@ -726,7 +726,7 @@ class Handler(BaseHTTPRequestHandler):
         site = self.headers.get("Sec-Fetch-Site")
         return site in (None, "same-origin", "none")
 
-    DATA_PATH = re.compile(r"^/data/(index\.json|funds/[A-Za-z0-9_-]{1,40}\.json)$")
+    DATA_PATH = re.compile(r"^/data/(index\.json|alerts\.json|funds/[A-Za-z0-9_-]{1,40}\.json)$")
 
     def serve_static(self, path, head_only=False):
         entry = self.STATIC.get(path)

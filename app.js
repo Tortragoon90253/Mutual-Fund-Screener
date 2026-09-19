@@ -149,7 +149,7 @@ function freshPlan(name){
 function freshState(){
   const funds = SAMPLES.map(s=>({...s, id:uid(), sample:true}));
   const pl = freshPlan(); pl.fundIds = funds.map(f=>f.id);
-  return {funds, plans:[pl], activePlan: pl.id, tx: [], showReal:false};
+  return {funds, plans:[pl], activePlan: pl.id, tx: [], changes: [], showReal:false};
 }
 // funds คือคลังกลาง (ข้อมูลกองเป็นข้อเท็จจริงของกอง) · fundIds คือกองที่แผนนี้เลือกไว้
 // เอากองออกจากแผนหนึ่งต้องไม่กระทบแผนอื่นที่เลือกกองเดียวกัน
@@ -300,6 +300,31 @@ function sanitizeTx(t, fundIds, planIds){
           date: okDate(t.date) ? t.date : '',
           units, amount: amount==='' ? 0 : amount};
 }
+/* สิ่งที่คุ้มจะบอกเมื่อ Fact Sheet รอบใหม่มา — ไม่ใช่ทุกฟิลด์ เพราะตัวเลขสถิติขยับทุกรอบจนกลายเป็นเสียงรบกวน
+   เลือกเฉพาะเรื่องที่ถ้าเปลี่ยนแล้วอาจต้องทบทวนการถือครอง */
+const WATCH = [
+  {k:'riskLevel', l:'ระดับความเสี่ยง', fmt:v=>`ระดับ ${v}`, up:'bad'},
+  {k:'ter',       l:'ค่าใช้จ่ายรวม TER', fmt:v=>`${(+v).toFixed(2)}%/ปี`, up:'bad'},
+  {k:'front',     l:'ค่าธรรมเนียมขาย', fmt:v=>`${(+v).toFixed(2)}%`, up:'bad'},
+  {k:'back',      l:'ค่าธรรมเนียมรับซื้อคืน', fmt:v=>`${(+v).toFixed(2)}%`, up:'bad'},
+  {k:'switchFee', l:'ค่าธรรมเนียมสับเปลี่ยน', fmt:v=>`${(+v).toFixed(2)}%`, up:'bad'},
+  {k:'ret1',      l:'ผลตอบแทน 1 ปี', fmt:v=>`${(+v).toFixed(2)}%`, up:'good'},
+  {k:'sharpe',    l:'Sharpe Ratio', fmt:v=>(+v).toFixed(2), up:'good'},
+  {k:'alpha',     l:'Alpha', fmt:v=>`${(+v).toFixed(2)}%/ปี`, up:'good'},
+  {k:'sd',        l:'ความผันผวน SD', fmt:v=>`${(+v).toFixed(2)}%/ปี`, up:'bad'},
+  {k:'aum',       l:'ขนาดกองทุน', fmt:v=>`${Math.round(+v).toLocaleString('th-TH')} ลบ.`, up:''}
+];
+const WATCH_SEC = [
+  {k:'asOf',     l:'Fact Sheet ณ วันที่'},
+  {k:'portAsOf', l:'พอร์ตการลงทุน ณ วันที่'}
+];
+function sanitizeChange(c){
+  if (!c || typeof c!=='object') return null;
+  const at = cleanStr(c.at,25), fund = cleanStr(c.fund,120), label = cleanStr(c.label,60);
+  if (!at || !fund || !label) return null;
+  return {at, fund, label, from: cleanStr(c.from,60), to: cleanStr(c.to,60),
+          dir: cleanEnum(c.dir, ['good','bad',''], '')};
+}
 function sanitizeState(s){
   if (!s || typeof s!=='object' || !Array.isArray(s.funds)) return null;
   const funds = s.funds.slice(0,500).map(sanitizeFund).filter(Boolean);
@@ -312,6 +337,7 @@ function sanitizeState(s){
   const planIds = new Set(); plans.forEach(pl=>{ while (planIds.has(pl.id)) pl.id = uid(); planIds.add(pl.id); });
   const active = cleanStr(s.activePlan,16);
 
+  const changes = Array.isArray(s.changes) ? s.changes.slice(-300).map(sanitizeChange).filter(Boolean) : [];
   let tx = Array.isArray(s.tx) ? s.tx.slice(0,5000).map(t=>sanitizeTx(t, fundIds, planIds)).filter(Boolean) : [];
   // holdings เดิมเก็บต้นทุนเฉลี่ยตัวเดียว แปลงเป็นรายการซื้อหนึ่งรายการโดยไม่ระบุวันที่ (ยอดยกมา)
   if (!tx.length && s.holdings && typeof s.holdings==='object')
@@ -325,7 +351,7 @@ function sanitizeState(s){
   const used = new Set(plans.flatMap(pl=>pl.fundIds).concat(tx.map(t=>t.fundId)));
   return bindPlan({funds: funds.filter(f=>used.has(f.id)),
                    plans, activePlan: planIds.has(active) ? active : plans[0].id,
-                   tx, showReal: s.showReal===true});
+                   tx, changes, showReal: s.showReal===true});
 }
 
 /* ============ helpers ============ */
@@ -334,9 +360,12 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;'
 const has = v => v !== '' && v !== null && v !== undefined && !isNaN(parseFloat(v));
 const num = (v, d=0) => has(v) ? parseFloat(v) : d;
 const todayISO = () => new Date().toISOString().slice(0,10);
+/* th-TH ใช้ปฏิทินพุทธเป็นค่าตั้งต้น จะได้ 2569 ต้องต่อท้าย -u-ca-gregory ถึงจะได้ ค.ศ. */
+const fmtWhen = iso => { const d = new Date(iso);
+  return isNaN(d) ? '-' : d.toLocaleString('th-TH-u-ca-gregory', {dateStyle:'medium', timeStyle:'short'}); };
 const TH_MON = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const monLabel = iso => { const d = new Date(iso+'T00:00:00Z');
-  return TH_MON[d.getUTCMonth()] + ' ' + String((d.getUTCFullYear()+543)%100).padStart(2,'0'); };
+  return TH_MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); };   // ค.ศ. ทั้งหมด ไม่ใช่ พ.ศ.
 const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
 const fmtB = n => Math.round(n).toLocaleString('th-TH') + ' ฿';
 const fmtShort = n => { const a=Math.abs(n); return a>=1e6 ? (n/1e6).toFixed(a>=1e7?1:2)+' ล้าน' : a>=1e3 ? Math.round(n/1e3).toLocaleString('th-TH')+' พัน' : Math.round(n).toString(); };
@@ -786,7 +815,7 @@ async function secInit(){
   try{
     secStatic = await loadStatic();
     secMode = 'static'; secReady = true;
-    const when = secStatic.generated ? new Date(secStatic.generated).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
+    const when = secStatic.generated ? fmtWhen(secStatic.generated) : '-';
     const scope = secStatic.mode==='watchlist' ? 'เฉพาะกองในรายการติดตาม' : 'ทุกกองที่เปิดขาย';
     status.textContent = `ข้อมูลจาก ก.ล.ต. ${secStatic.items.length.toLocaleString('th-TH')} ชนิดหน่วยลงทุน (${scope}) · อัปเดตล่าสุด ${when}`;
     const stamp = $('#dataStamp'); if (stamp) stamp.textContent = `ก.ล.ต. · ${secStatic.items.length.toLocaleString('th-TH')} หน่วย · ${when}`;
@@ -880,7 +909,37 @@ function mergeFund(old, fund){
   Object.keys(fund).forEach(k=>{ if (fund[k]==='' && old[k]!=='' && old[k]!==undefined) keep[k]=old[k]; });
   const out = sanitizeFund({...old, ...fund, ...keep, id:old.id});
   if (out && secMode==='static' && secStatic && secStatic.generated) out.syncedAt = secStatic.generated;
+  if (out) recordChanges(old, out);
   return out;
+}
+/* บันทึกว่าอะไรในแฟกต์ชีตเปลี่ยนไปบ้าง เก็บไว้ในเบราว์เซอร์ของผู้ใช้
+   ต้องเก็บเอง เพราะ ก.ล.ต. ให้แต่ข้อมูล ณ ปัจจุบัน ไม่มี API บอกว่ารอบนี้ต่างจากรอบก่อนตรงไหน */
+function recordChanges(old, now){
+  if (!Array.isArray(state.changes)) state.changes = [];
+  const at = new Date().toISOString();          // เก็บเป็น UTC แล้วแปลงเป็นเวลาเครื่องตอนแสดง
+  const name = now.name.split(' —')[0];
+  const push = (label, from, to, dir) => state.changes.push({at, fund:name, label, from, to, dir: dir||''});
+
+  WATCH.forEach(w=>{
+    const a = old[w.k], b = now[w.k];
+    if (!has(b) || String(a)===String(b)) return;
+    const dir = !has(a) ? '' : !w.up ? '' : (+b > +a ? w.up : w.up==='bad' ? 'good' : 'bad');
+    push(w.l, has(a) ? w.fmt(a) : '—', w.fmt(b), dir);
+  });
+  const os = old.sec || {}, ns = now.sec || {};
+  WATCH_SEC.forEach(w=>{ if (ns[w.k] && os[w.k] !== ns[w.k]) push(w.l, os[w.k] || '—', ns[w.k], ''); });
+
+  // ปันผลที่เพิ่งประกาศ — เทียบรายการจ่ายที่มีอยู่เดิมกับรอบใหม่
+  const paid = o => new Set(((o.div && o.div.pays) || []).map(x=>x[0]+'|'+x[1]));
+  const before = paid(os);
+  ((ns.div && ns.div.pays) || []).forEach(([d,v])=>{
+    if (!before.has(d+'|'+v)) push('ประกาศจ่ายปันผล', '—', `${v} ฿/หน่วย · ${d}`, 'good'); });
+
+  // องค์ประกอบพอร์ต — บอกแค่ว่าเปลี่ยน ไม่ไล่ทีละตัว เพราะรายชื่อยาวเกินกว่าจะอ่านไหว
+  const top = o => ((o.top5)||[]).map(x=>`${x[0]} ${x[1]}`).join(' | ');
+  if (ns.top5 && top(os) && top(os)!==top(ns)) push('5 อันดับแรกในพอร์ต', 'ชุดเดิม', 'เปลี่ยนไป', '');
+
+  if (state.changes.length > 300) state.changes = state.changes.slice(-300);
 }
 /* ---- ตามข้อมูลรอบใหม่ให้อัตโนมัติ ----
    กองที่เพิ่มไว้ถูกคัดลอกเก็บใน localStorage ไม่ได้อ่านจากไฟล์กลางใหม่ทุกครั้งที่เปิดหน้า
@@ -888,6 +947,31 @@ function mergeFund(old, fund){
    เทียบด้วยสตริง generated ของไฟล์ที่ build ไว้ ไม่ใช่วันที่ เพราะวันเดียวกัน build ซ้ำได้
    ทำเฉพาะโหมด static ที่อ่านจากไฟล์สำเร็จรูป — โหมด live ยิง API จริงหลายสิบครั้งต่อกอง
    เปิดหน้าทีก็รอทีละหลายวินาที จึงยังต้องกด "อัปเดตจาก ก.ล.ต." เอง */
+/* ---- Investor Alert ----
+   รายชื่อที่ ก.ล.ต. ประกาศเตือนว่าชักชวนลงทุนโดยไม่ได้รับอนุญาต อยู่คนละหมวด API กับข้อมูลกองทุน
+   ไม่ผูกกับกองที่ถืออยู่ เป็นรายชื่อระดับตลาด — ถ้าคีย์ไม่มีสิทธิ์หมวดนี้ ไฟล์จะไม่ถูกสร้าง และหน้าจะบอกตามนั้น
+   ทุกอย่างที่มาจากไฟล์นี้เป็นข้อความจากภายนอก จึง esc ก่อนแสดงทุกช่องและไม่ทำลิงก์ให้กดได้ */
+async function renderInvestorAlerts(){
+  const box = $('#homeInvAlert'); if (!box) return;
+  if (secMode!=='static'){ box.innerHTML = '<p class="muted" style="margin:0">เปิดผ่านเว็บ GitHub Pages เพื่อดูรายชื่อนี้</p>'; return; }
+  let j;
+  try{ j = await getJson('data/alerts.json'); }
+  catch(e){ box.innerHTML = '<p class="muted" style="margin:0">ยังไม่มีข้อมูลชุดนี้ — คีย์ ก.ล.ต. ที่ใช้สร้างข้อมูลอาจยังไม่ได้สมัครหมวด license-check</p>'; return; }
+  const items = Array.isArray(j.items) ? j.items.slice(0,60) : [];
+  if (!items.length){ box.innerHTML = '<p class="muted" style="margin:0">ไม่มีรายชื่อในชุดข้อมูลล่าสุด</p>'; return; }
+  const sub = $('#homeAlertSub');
+  if (sub && j.generated) sub.textContent = `รายชื่อบุคคล/นิติบุคคลที่ ก.ล.ต. ประกาศเตือนว่าชักชวนลงทุนโดยไม่ได้รับอนุญาต · ${items.length} รายชื่อล่าสุด ณ ${fmtWhen(j.generated)}`;
+  const cut = (t,n) => t.length>n ? t.slice(0,n)+'…' : t;
+  box.innerHTML = `<ul class="alert-list">${items.slice(0,12).map(a=>`<li>
+      <span class="dot"></span>
+      <span class="who"><b>${esc(a.name)}</b>
+        ${a.how?`<span>${esc(cut(a.how,170))}</span>`:''}
+        ${a.web||a.fb||a.line?`<span>ช่องทางที่ใช้: ${esc(cut([a.web,a.fb,a.line].filter(Boolean).join(' · '),120))}</span>`:''}
+      </span>
+      <span class="when">${esc(a.date||'')}</span></li>`).join('')}</ul>`
+    + (items.length>12 ? `<p class="muted" style="margin:8px 0 0;font-size:.82rem">และอีก ${items.length-12} รายชื่อในชุดข้อมูล · ดูรายชื่อทั้งหมดได้ที่เว็บไซต์ ก.ล.ต.</p>` : '');
+}
+
 let lastSync = null;
 async function autoSyncFunds(){
   if (secMode!=='static' || !secStatic || !secStatic.generated) return;
@@ -1245,11 +1329,20 @@ function fillPlanSelects(){
   const sc = $('#pfScope');
   if (sc){ sc.innerHTML = `<option value="">ทุกแผนรวมกัน</option>` + opts;
            sc.value = state.plans.some(pl=>pl.id===pfScopeId) ? pfScopeId : (pfScopeId = ''); }
+  // เลือกดูพอร์ตของแผนใดแผนหนึ่ง = บันทึกรายการได้เฉพาะกองที่ออกแบบไว้ในแผนนั้น
+  // ไม่งั้นจะเผลอบันทึกรายการเข้ากองที่ไม่ได้อยู่ในแผนที่กำลังดูอยู่ แล้วตัวเลขจะไม่ตรงกับที่เห็น
+  const scoped = pfScopeId ? state.plans.find(pl=>pl.id===pfScopeId) : null;
   const tf = $('#txFund');
   if (tf){ const cur = tf.value;
-    tf.innerHTML = state.funds.map(f=>`<option value="${esc(f.id)}">${esc(f.name.split(' —')[0])}</option>`).join('')
-      || '<option value="">— ยังไม่มีกองทุน —</option>';
-    if (state.funds.some(f=>f.id===cur)) tf.value = cur; }
+    const list = scoped ? state.funds.filter(f=>scoped.fundIds.includes(f.id)) : state.funds;
+    tf.innerHTML = list.map(f=>`<option value="${esc(f.id)}">${esc(f.name.split(' —')[0])}</option>`).join('')
+      || `<option value="">— ${scoped ? 'แผนนี้ยังไม่มีกองทุน' : 'ยังไม่มีกองทุน'} —</option>`;
+    if (list.some(f=>f.id===cur)) tf.value = cur; }
+  if (txp){ txp.value = scoped ? scoped.id : state.activePlan; txp.disabled = !!scoped; }
+  const note = $('#txScopeNote');
+  if (note) note.textContent = scoped
+    ? `กำลังบันทึกเข้าแผน "${scoped.name}" — เลือกได้เฉพาะ ${scoped.fundIds.length} กองที่ออกแบบไว้ในแผนนี้ · เปลี่ยนเป็น "ทุกแผนรวมกัน" ด้านบนเพื่อเลือกกองอื่น`
+    : '';
   const del = $('#planDel'); if (del) del.disabled = state.plans.length<2;
   if (typeof txPriceHint==='function') txPriceHint();
 }
@@ -1439,6 +1532,21 @@ function renderHome(){
   $('#homeDiv').innerHTML = divs.length
     ? `<ul class="port-list">${divs.slice(0,8).map(x=>`<li><span class="sw" style="background:var(${x.d>=today?'--good':'--d7'})"></span><span class="nm">${esc(x.f.name.split(' —')[0])}${x.d>=today?' · จะจ่าย':''}</span><span class="pv">${x.v} ฿ · ${esc(x.d)}</span></li>`).join('')}</ul>`
     : '<p class="muted" style="margin:0">ยังไม่มีประวัติปันผล — กองที่ถืออาจไม่จ่ายปันผล หรือข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บประวัติ</p>';
+
+  const held2 = new Set(state.funds.map(f=>f.name.split(' —')[0]));
+  const chg = (state.changes||[]).filter(c=>held2.has(c.fund)).slice().reverse();
+  $('#homeChanges').innerHTML = chg.length
+    ? `<thead><tr><th>เมื่อ</th><th>กองทุน</th><th>รายการ</th><th>เดิม</th><th>เป็น</th></tr></thead><tbody>${
+      chg.slice(0,40).map(c=>`<tr>
+        <td class="muted" style="font-size:.82rem;white-space:nowrap">${esc(fmtWhen(c.at))}</td>
+        <td>${esc(c.fund)}</td>
+        <td>${esc(c.label)}</td>
+        <td class="muted">${esc(c.from)}</td>
+        <td${c.dir?` style="color:var(--${c.dir==='good'?'good':'bad'})"`:''}>${esc(c.to)}</td></tr>`).join('')}</tbody>`
+    : '<tbody><tr><td class="muted">ยังไม่มีการเปลี่ยนแปลงที่บันทึกไว้ — จะเริ่มบันทึกตั้งแต่ข้อมูล ก.ล.ต. รอบถัดไป</td></tr></tbody>';
+  $('#homeChgSub').textContent = chg.length
+    ? `${chg.length} รายการที่บันทึกไว้ · เทียบข้อมูลรอบล่าสุดจาก ก.ล.ต. กับรอบก่อนหน้า · เก็บในเบราว์เซอร์นี้เท่านั้น`
+    : 'เทียบข้อมูลรอบล่าสุดจาก ก.ล.ต. กับรอบก่อนหน้าที่โปรแกรมเก็บไว้ — บันทึกในเบราว์เซอร์นี้เท่านั้น';
 
   const seenF = new Set();
   const fresh = res.filter(r=>!seenF.has(r.f.id) && seenF.add(r.f.id))
@@ -1975,7 +2083,7 @@ function draw(id, cfg){ if (charts[id]) charts[id].destroy(); charts[id] = new C
 buildForm();
 planUI();
 renderFunds();
-secInit().then(autoSyncFunds);
+secInit().then(autoSyncFunds).then(renderInvestorAlerts);
 try{ const t = localStorage.getItem(KEY+'.tab'); if (t && $('#panel-'+t)) showTab(t); }catch(e){}
 try{ const sec = localStorage.getItem(KEY+'.sec'); if (sec) showSection(sec); }catch(e){}
 // Chart.js bakes the palette in when a chart is built, so switching theme needs a redraw.

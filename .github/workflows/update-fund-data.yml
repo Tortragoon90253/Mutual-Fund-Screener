@@ -87,6 +87,8 @@ jobs:
           cp -r vendor/fonts _site/vendor/
           if [ -f data-branch/index.json ]; then
             mkdir -p _site/data && cp -r data-branch/index.json data-branch/funds _site/data/
+            # Investor Alert เป็นหมวดข้อมูลแยก คีย์อาจไม่มีสิทธิ์ จึงไม่มีไฟล์นี้ได้โดยไม่ถือว่าผิดพลาด
+            [ -f data-branch/alerts.json ] && cp data-branch/alerts.json _site/data/ || true
           fi
           du -sh _site
           find _site -maxdepth 2 -type f | head -20

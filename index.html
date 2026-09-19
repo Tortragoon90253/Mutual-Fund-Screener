@@ -142,6 +142,15 @@ a.btn:hover{border-color:var(--accent);color:var(--accent)}
 .port-list .sw{width:10px;height:10px;border-radius:3px;flex:0 0 auto;align-self:center}
 .port-list .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .port-list .pv{color:var(--muted);font-family:var(--mono);font-size:.8rem;font-variant-numeric:tabular-nums;flex:0 0 auto}
+/* รายชื่อ Investor Alert — ข้อความยาวและต้องขึ้นบรรทัดใหม่ได้ จึงไม่ใช้ .port-list ที่บีบเป็นบรรทัดเดียว */
+.alert-list{margin:0;padding:0;list-style:none}
+.alert-list li{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--border)}
+.alert-list li:first-child{border-top:0;padding-top:0}
+.alert-list .dot{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:0 0 auto;margin-top:7px}
+.alert-list .who{flex:1 1 auto;min-width:0}
+.alert-list .who b{display:block;font-weight:600;font-size:.9rem;line-height:1.45}
+.alert-list .who span{display:block;color:var(--muted);font-size:.82rem;line-height:1.5;margin-top:2px}
+.alert-list .when{flex:0 0 auto;color:var(--muted);font-family:var(--mono);font-size:.78rem;white-space:nowrap;margin-top:2px}
 .tag{display:inline-block;font-size:.74rem;padding:1px 8px;border-radius:999px;background:var(--warn-soft);color:var(--warn);font-weight:600;vertical-align:middle}
 .tag.sec{background:var(--accent-soft);color:var(--accent);margin-left:4px}
 .sec-row{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}
@@ -273,9 +282,19 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     </div>
   </div>
   <div class="card">
+    <h2>สิ่งที่เปลี่ยนใน Fact Sheet ของกองที่คุณติดตาม</h2>
+    <p class="sub" id="homeChgSub">เทียบข้อมูลรอบล่าสุดจาก ก.ล.ต. กับรอบก่อนหน้าที่โปรแกรมเก็บไว้ — บันทึกไว้ในเบราว์เซอร์นี้เท่านั้น</p>
+    <div class="scroll"><table id="homeChanges"></table></div>
+  </div>
+  <div class="card">
     <h2>Fact Sheet ล่าสุดของกองที่คุณติดตาม</h2>
     <p class="sub">เรียงตามวันที่ของข้อมูลในแฟกต์ชีต ไม่ใช่วันที่ดึงข้อมูล</p>
     <div class="scroll"><table id="homeFresh"></table></div>
+  </div>
+  <div class="card">
+    <h2>Investor Alert จาก ก.ล.ต.</h2>
+    <p class="sub" id="homeAlertSub">รายชื่อบุคคล/นิติบุคคลที่ ก.ล.ต. ประกาศเตือนว่าชักชวนลงทุนโดยไม่ได้รับอนุญาต — ไม่เกี่ยวกับกองทุนที่คุณถือ แต่เป็นรายชื่อที่ควรรู้ไว้</p>
+    <div id="homeInvAlert"></div>
   </div>
 </div>
 
@@ -303,6 +322,7 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
       <label class="f">ราคา/หน่วย (บาท)<input type="number" id="txNav" min="0" step="0.0001"></label>
       <label class="f">จำนวนหน่วย<input type="number" id="txUnits" min="0" step="0.0001"></label>
     </div>
+    <p class="muted" id="txScopeNote" style="margin:8px 0 0;font-size:.85rem"></p>
     <p class="muted" id="txNavHint" style="margin:8px 0 0;font-size:.85rem"></p>
     <div class="row" style="margin-top:10px">
       <button class="btn primary small" type="button" id="txAdd">เพิ่มรายการ</button>

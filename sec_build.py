@@ -87,6 +87,43 @@ DATED_FALLBACK_PAGES = 2500
 PER_FUND_MAX_CALLS = 3000
 
 
+# รายชื่อที่ ก.ล.ต. ประกาศเตือน อยู่คนละหมวดกับข้อมูลกองทุน (license-check)
+# คีย์ที่สมัครไว้อาจไม่ครอบคลุมหมวดนี้ จึงต้องพังได้โดยไม่ล้มทั้ง build
+INVESTOR_ALERT = "/v1/license-check/licensee/investoralert/alertdetail"
+ALERT_KEEP = 60
+
+
+def fetch_alerts():
+    """รายชื่อ Investor Alert ล่าสุด — คืน None ถ้าคีย์ไม่มีสิทธิ์หรือ endpoint ล่ม"""
+    try:
+        rows = fetch_all(INVESTOR_ALERT, retry_empty=False, quiet=True)
+    except Exception as e:
+        warn(f"ดึง Investor Alert ไม่ได้ ({e}) — ข้ามไป ข้อมูลกองทุนไม่กระทบ")
+        return None
+    out = []
+    for r in rows:
+        name = (r.get("name_th") or r.get("name_en") or "").strip()
+        if not name:
+            continue
+        out.append({
+            "case": str(r.get("case_id") or "")[:40],
+            "date": (r.get("disclosure_date") or "")[:10],
+            "name": name[:200],
+            "how": (r.get("persuade_desc") or "")[:400],
+            "web": (r.get("website") or "")[:300],
+            "fb": (r.get("facebook") or "")[:200],
+            "line": (r.get("line") or "")[:120],
+        })
+    if not out:
+        # ว่างเปล่ามักแปลว่าคีย์ไม่มีสิทธิ์หมวดนี้ หรือรูปแบบคำตอบไม่ตรงที่คาด
+        # เขียนไฟล์เปล่าจะเท่ากับบอกผู้ใช้ว่า "ไม่มีใครถูกเตือน" ซึ่งไม่จริง จึงถือว่าไม่มีข้อมูล
+        warn("Investor Alert ไม่คืนรายชื่อเลย — ถือว่ายังไม่มีข้อมูลชุดนี้ ไม่เขียนไฟล์")
+        return None
+    out.sort(key=lambda x: x["date"], reverse=True)
+    log(f"Investor Alert: {len(out):,} รายชื่อ (เก็บล่าสุด {min(len(out), ALERT_KEEP)})")
+    return out[:ALERT_KEEP]
+
+
 def fetch_all(path, params=None, retry_empty=True, quiet=False):
     """Download every page of one endpoint, stopping if the call budget would be exceeded.
 
@@ -548,6 +585,13 @@ def main():
         top = ", ".join(f"{k} {v}%" for k, v in list(diag["filled"].items())[:8])
         log(f"ความครบของข้อมูล ({diag['n']:,} รายการ): {top}")
         log(f"แถวเทียบกลุ่มที่พบ: {len(diag['peerDesc'])} แบบ" + (f" เช่น {diag['peerDesc'][0][0]}" if diag["peerDesc"] else " (ไม่พบ)"))
+
+    alerts = fetch_alerts()
+    if alerts is not None:
+        write_json(os.path.join(args.out, "alerts.json"),
+                   {"generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "source": "SEC Open API — Investor Alert (license-check)",
+                    "items": alerts})
 
     funds_dir = os.path.join(args.out, "funds")
     shutil.rmtree(funds_dir, ignore_errors=True)
