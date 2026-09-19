@@ -208,6 +208,7 @@ function sanitizeFund(f){
   if (!out.name) return null;
   out.id = cleanId(f.id);
   out.sample = f.sample===true;
+  out.syncedAt = cleanStr(f.syncedAt, 40);   // ข้อมูล ก.ล.ต. รอบที่กองนี้ตามไปแล้ว
   if (f.sec && typeof f.sec==='object'){
     const s = f.sec, list = a => Array.isArray(a) ? a.slice(0,30).map(x=>cleanStr(x,300)).filter(Boolean) : [];
     // [[ชื่อทรัพย์สิน, %NAV], ...] from the SEC fact sheet — drawn as the portfolio donut
@@ -861,6 +862,50 @@ async function secFetchFund(projId, cls, source){
   const {fund} = await secApi(`api/fund?proj_id=${encodeURIComponent(projId)}&cls=${encodeURIComponent(cls||'')}`);
   return fund;
 }
+/* รวมข้อมูลรอบใหม่เข้ากับกองเดิม โดยไม่ทับสองอย่าง:
+   สิ่งที่ผู้ใช้กรอกเอง (ก.ล.ต. ไม่มีให้) และช่องที่รอบใหม่ว่างแต่ของเดิมมีค่า */
+function mergeFund(old, fund){
+  const keep = {};
+  ['holdings','expReturn','notes'].forEach(k=>{ if (has(old[k]) || (k==='notes'&&old[k])) keep[k]=old[k]; });
+  Object.keys(fund).forEach(k=>{ if (fund[k]==='' && old[k]!=='' && old[k]!==undefined) keep[k]=old[k]; });
+  const out = sanitizeFund({...old, ...fund, ...keep, id:old.id});
+  if (out && secMode==='static' && secStatic && secStatic.generated) out.syncedAt = secStatic.generated;
+  return out;
+}
+/* ---- ตามข้อมูลรอบใหม่ให้อัตโนมัติ ----
+   กองที่เพิ่มไว้ถูกคัดลอกเก็บใน localStorage ไม่ได้อ่านจากไฟล์กลางใหม่ทุกครั้งที่เปิดหน้า
+   ถ้าไม่ตามให้ ราคาต่อหน่วยจะค้างอยู่ที่รอบที่กดเพิ่ม แล้วมูลค่าพอร์ตก็ผิดโดยไม่มีอะไรเตือน
+   เทียบด้วยสตริง generated ของไฟล์ที่ build ไว้ ไม่ใช่วันที่ เพราะวันเดียวกัน build ซ้ำได้
+   ทำเฉพาะโหมด static ที่อ่านจากไฟล์สำเร็จรูป — โหมด live ยิง API จริงหลายสิบครั้งต่อกอง
+   เปิดหน้าทีก็รอทีละหลายวินาที จึงยังต้องกด "อัปเดตจาก ก.ล.ต." เอง */
+let lastSync = null;
+async function autoSyncFunds(){
+  if (secMode!=='static' || !secStatic || !secStatic.generated) return;
+  const build = secStatic.generated;
+  const stale = state.funds.filter(f=>f.sec && f.sec.projId && f.syncedAt !== build);
+  if (!stale.length) return;
+  const nameOf = f => f.name.split(' —')[0];
+  const moved = [], failed = [];
+  let done = 0;
+  await Promise.all(stale.map(async f=>{
+    const i = state.funds.indexOf(f);
+    try{
+      const fresh = await staticFund(f.sec.projId, f.sec.cls);
+      const merged = mergeFund(f, fresh);
+      if (!merged) throw new Error('ข้อมูลที่ได้มาไม่ครบ');
+      const before = priceOf(f), after = priceOf(merged);
+      state.funds[i] = merged; done++;
+      if (before!=null && after!=null && after!==before) moved.push({n:nameOf(f), before, after});
+    }catch(err){ failed.push({n:nameOf(f), msg:err.message}); }
+  }));
+  if (!done && !failed.length) return;
+  save();
+  lastSync = {done, moved, failed};
+  renderFunds();
+  if ($('#section-home').classList.contains('active')) renderHome();
+  if ($('#section-port').classList.contains('active')) renderHoldings();
+  if ($('#panel-plan') && $('#panel-plan').classList.contains('active')) renderPlan();
+}
 async function addSecFund(b){
   const projId = b.dataset.secadd, cls = b.dataset.seccls;
   const dup = state.funds.find(f=>f.sec && f.sec.projId===projId && f.sec.cls===cls);
@@ -1051,11 +1096,7 @@ $('#fundList').addEventListener('click', async e=>{
     e.target.disabled = true; e.target.textContent = 'กำลังอัปเดต…';
     try{
       const fund = await secFetchFund(old.sec.projId, old.sec.cls);
-      // keep what the API cannot provide and the user's own assumptions
-      const keep = {};
-      ['holdings','expReturn','notes'].forEach(k=>{ if (has(old[k]) || (k==='notes'&&old[k])) keep[k]=old[k]; });
-      Object.keys(fund).forEach(k=>{ if (fund[k]==='' && old[k]!=='' && old[k]!==undefined) keep[k]=old[k]; });
-      state.funds[i] = sanitizeFund({...old, ...fund, ...keep, id:old.id}) || old;
+      state.funds[i] = mergeFund(old, fund) || old;
       save(); renderFunds();
     }catch(err){ alert('อัปเดตไม่สำเร็จ: '+err.message); renderFunds(); }
     return;
@@ -1351,6 +1392,15 @@ function renderHome(){
     const ends = ov.runs.filter(r=>r.contributing).sort((a,b)=>a.dcaLeft-b.dcaLeft)[0];
     if (ends && ov.runs.filter(r=>r.contributing).length>1 && ov.totMonthly>ends.monthly)
       al.push([4,'', `ต้องใส่เงินรวม ${fmtB(ov.totMonthly)}/เดือน ไปอีก ${ends.dcaLeft} เดือน แล้วลดเหลือ ${fmtB(ov.totMonthly-ends.monthly)} เมื่อแผน "${ends.pl.name}" ใส่เงินครบรอบ`]);
+  }
+  if (lastSync){
+    if (lastSync.done) al.push([-1,'', `ตามข้อมูล ก.ล.ต. รอบล่าสุดให้แล้ว ${lastSync.done} กอง`
+      + (lastSync.moved.length
+          ? ` · ราคาต่อหน่วยเปลี่ยน ${lastSync.moved.length} กอง: ` + lastSync.moved.slice(0,3)
+              .map(x=>`${x.n} ${x.before.toFixed(4)} → ${x.after.toFixed(4)}`).join(', ')
+              + (lastSync.moved.length>3 ? ` และอีก ${lastSync.moved.length-3} กอง` : '')
+          : ' · ราคาต่อหน่วยไม่เปลี่ยน')]);
+    lastSync.failed.forEach(x=>al.push([0,'warn', `${x.n}: ตามข้อมูลรอบล่าสุดไม่ได้ — ${x.msg}`]));
   }
   al.sort((a,b)=>a[0]-b[0]);
   $('#homeAlerts').innerHTML = al.length
@@ -1861,7 +1911,7 @@ function draw(id, cfg){ if (charts[id]) charts[id].destroy(); charts[id] = new C
 buildForm();
 planUI();
 renderFunds();
-secInit();
+secInit().then(autoSyncFunds);
 try{ const t = localStorage.getItem(KEY+'.tab'); if (t && $('#panel-'+t)) showTab(t); }catch(e){}
 try{ const sec = localStorage.getItem(KEY+'.sec'); if (sec) showSection(sec); }catch(e){}
 // Chart.js bakes the palette in when a chart is built, so switching theme needs a redraw.
