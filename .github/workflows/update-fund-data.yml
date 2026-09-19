@@ -84,6 +84,7 @@ jobs:
           mkdir -p _site/vendor
           cp index.html app.js _site/
           cp vendor/chart.umd.min.js _site/vendor/
+          cp -r vendor/fonts _site/vendor/
           if [ -f data-branch/index.json ]; then
             mkdir -p _site/data && cp -r data-branch/index.json data-branch/funds _site/data/
           fi

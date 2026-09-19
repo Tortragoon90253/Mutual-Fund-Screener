@@ -7,6 +7,24 @@
 <meta name="referrer" content="no-referrer">
 <title>คัดกรองกองทุน & วางแผนลงทุน</title>
 <style>
+/* IBM Plex Sans Thai + Plex Mono เก็บไว้ในโปรเจกต์เอง (73 KB รวม 5 ไฟล์)
+   ไม่ใช้ Google Fonts เพราะ CSP ตั้ง font-src 'self' ไว้ และการเปิดให้โหลดฟอนต์
+   จากโดเมนนอกเพื่อความสวยอย่างเดียวไม่คุ้มกับการลดความเข้มของ CSP */
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:400;font-display:swap;
+  src:url("vendor/fonts/ibm-plex-sans-thai-thai-400-normal.woff2") format("woff2");
+  unicode-range:U+02D7,U+0303,U+0331,U+0E01-0E5B,U+200C-200D,U+25CC}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:400;font-display:swap;
+  src:url("vendor/fonts/ibm-plex-sans-thai-latin-400-normal.woff2") format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:600;font-display:swap;
+  src:url("vendor/fonts/ibm-plex-sans-thai-thai-600-normal.woff2") format("woff2");
+  unicode-range:U+02D7,U+0303,U+0331,U+0E01-0E5B,U+200C-200D,U+25CC}
+@font-face{font-family:"IBM Plex Sans Thai";font-style:normal;font-weight:600;font-display:swap;
+  src:url("vendor/fonts/ibm-plex-sans-thai-latin-600-normal.woff2") format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:500;font-display:swap;
+  src:url("vendor/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 :root{
   /* โทนเข้มเป็นค่าเริ่มต้น — ธีมสว่างยังใช้ได้ด้วย <html data-theme="light"> */
   --bg:#101311; --surface:#181C19; --surface-2:#1F2420; --text:#E8EAE6; --muted:#98A199; --border:#2A312C;
@@ -15,7 +33,7 @@
   --c-bad:#E5674E; --c-mid:#4FB894; --c-good:#5B9BE5; --c-principal:#7C857E; --c-real:#D9A441; --grid:#242B26;
   --d1:#4FB894; --d2:#C97B5A; --d3:#5B9BE5; --d4:#D9A441; --d5:#B29AE0; --d6:#8FB04F; --d7:#7C857E;
   --radius:10px; --shadow:none;
-  --mono:ui-monospace,"Cascadia Mono","Consolas","DejaVu Sans Mono",monospace;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono","Consolas",monospace;
 }
 :root[data-theme="light"]{
   --bg:#f6f5f1; --surface:#ffffff; --surface-2:#f0eee8; --text:#1d1c1a; --muted:#6b675f; --border:#e0ddd4;
@@ -27,7 +45,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0}
-body{background:var(--bg);color:var(--text);font-family:"Leelawadee UI","Noto Sans Thai","Sukhumvit Set","Thonburi",Tahoma,system-ui,sans-serif;font-size:15px;line-height:1.6;overflow-x:hidden}
+body{background:var(--bg);color:var(--text);font-family:"IBM Plex Sans Thai","Leelawadee UI","Noto Sans Thai","Sukhumvit Set",Tahoma,system-ui,sans-serif;font-size:15px;line-height:1.6;overflow-x:hidden}
 .wrap{max-width:1360px;margin:0 auto;padding:0 18px 48px}
 /* แถบบนคงที่ — สามส่วนหลักของโปรแกรม */
 .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;height:52px;margin:0 -18px 16px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--border)}

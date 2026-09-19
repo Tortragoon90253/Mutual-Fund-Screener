@@ -665,6 +665,19 @@ def search(q):
 
 
 # ---------------------------------------------------------------- server
+def font_files():
+    """ฟอนต์ที่เก็บไว้เองใน vendor/fonts — เสิร์ฟเฉพาะ .woff2 ที่มีอยู่จริง
+    ยังคงเป็น allowlist ไม่ใช่การเปิดโฟลเดอร์ให้เข้าถึงอิสระ"""
+    d = os.path.join(HERE, "vendor", "fonts")
+    if not os.path.isdir(d):
+        return {}
+    return {f"/vendor/fonts/{n}": (f"vendor/fonts/{n}", "font/woff2")
+            for n in sorted(os.listdir(d)) if n.endswith(".woff2")}
+
+
+FONT_FILES = font_files()
+
+
 class Handler(BaseHTTPRequestHandler):
     # Only these files are ever served; everything else (the key file, scripts) is 404.
     STATIC = {
@@ -672,6 +685,7 @@ class Handler(BaseHTTPRequestHandler):
         "/index.html": ("index.html", "text/html; charset=utf-8"),
         "/app.js": ("app.js", "text/javascript; charset=utf-8"),
         "/vendor/chart.umd.min.js": ("vendor/chart.umd.min.js", "text/javascript; charset=utf-8"),
+        **FONT_FILES,
     }
     ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
     server_version = "FundScreener"
