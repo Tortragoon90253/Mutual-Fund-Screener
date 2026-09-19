@@ -322,7 +322,7 @@ function sanitizeChange(c){
   if (!c || typeof c!=='object') return null;
   const at = cleanStr(c.at,25), fund = cleanStr(c.fund,120), label = cleanStr(c.label,60);
   if (!at || !fund || !label) return null;
-  return {at, fund, label, from: cleanStr(c.from,60), to: cleanStr(c.to,60),
+  return {at, fund, fid: cleanStr(c.fid,16), label, from: cleanStr(c.from,60), to: cleanStr(c.to,60),
           dir: cleanEnum(c.dir, ['good','bad',''], '')};
 }
 function sanitizeState(s){
@@ -990,7 +990,8 @@ function recordChanges(old, now){
   if (!Array.isArray(state.changes)) state.changes = [];
   const at = new Date().toISOString();          // เก็บเป็น UTC แล้วแปลงเป็นเวลาเครื่องตอนแสดง
   const name = now.name.split(' —')[0];
-  const push = (label, from, to, dir) => state.changes.push({at, fund:name, label, from, to, dir: dir||''});
+  // เก็บ id ไว้ด้วย ไม่ใช่แค่ชื่อ — ผู้ใช้แก้ชื่อกองได้ แล้วประวัติที่ผูกกับชื่อจะหายไปทั้งชุด
+  const push = (label, from, to, dir) => state.changes.push({at, fund:name, fid:now.id, label, from, to, dir: dir||''});
 
   WATCH.forEach(w=>{
     const a = old[w.k], b = now[w.k];
@@ -1026,6 +1027,10 @@ function recordChanges(old, now){
 async function renderInvestorAlerts(){
   const box = $('#homeInvAlert'); if (!box) return;
   if (secMode!=='static'){ box.innerHTML = '<p class="muted" style="margin:0">เปิดผ่านเว็บ GitHub Pages เพื่อดูรายชื่อนี้</p>'; return; }
+  // รอบข้อมูลที่ไม่ได้สร้างไฟล์นี้ไว้ก็ไม่ต้องไปขอ — ยิงแล้วได้ 404 ทุกครั้งที่เปิดหน้า ขึ้น error ค้างใน console เปล่าๆ
+  if (secStatic && secStatic.hasAlerts === false){
+    box.innerHTML = '<p class="muted" style="margin:0">ข้อมูลรอบล่าสุดไม่มีรายชื่อชุดนี้ — คีย์ ก.ล.ต. ที่ใช้สร้างข้อมูลอาจยังไม่ได้สมัครหมวด license-check</p>';
+    return; }
   let j;
   try{ j = await getJson('data/alerts.json'); }
   catch(e){ box.innerHTML = '<p class="muted" style="margin:0">ยังไม่มีข้อมูลชุดนี้ — คีย์ ก.ล.ต. ที่ใช้สร้างข้อมูลอาจยังไม่ได้สมัครหมวด license-check</p>'; return; }
@@ -1752,8 +1757,13 @@ function renderHome(){
     ? `<ul class="port-list">${divs.slice(0,8).map(x=>`<li><span class="sw" style="background:var(${x.d>=today?'--good':'--d7'})"></span><span class="nm">${esc(x.f.name.split(' —')[0])}${x.d>=today?' · จะจ่าย':''}</span><span class="pv">${x.v} ฿ · ${esc(x.d)}</span></li>`).join('')}</ul>`
     : '<p class="muted" style="margin:0">ยังไม่มีประวัติปันผล — กองที่ถืออาจไม่จ่ายปันผล หรือข้อมูลชุดนี้สร้างก่อนที่โปรแกรมจะเก็บประวัติ</p>';
 
-  const held2 = new Set(state.funds.map(f=>f.name.split(' —')[0]));
-  const chg = (state.changes||[]).filter(c=>held2.has(c.fund)).slice().reverse();
+  const byId = new Map(state.funds.map(f=>[f.id, f.name.split(' —')[0]]));
+  const byName = new Set(byId.values());
+  // รายการเก่าที่บันทึกไว้ก่อนมี fid ยังต้องแสดงได้ จึงถอยไปเทียบด้วยชื่อ
+  const chg = (state.changes||[])
+    .filter(c=>c.fid ? byId.has(c.fid) : byName.has(c.fund))
+    .map(c=>({...c, fund: c.fid ? byId.get(c.fid) : c.fund}))   // แก้ชื่อกองแล้วประวัติต้องใช้ชื่อใหม่
+    .reverse();
   $('#homeChanges').innerHTML = chg.length
     ? `<thead><tr><th>เมื่อ</th><th>กองทุน</th><th>รายการ</th><th>เดิม</th><th>เป็น</th></tr></thead><tbody>${
       chg.slice(0,40).map(c=>`<tr>
@@ -2248,7 +2258,9 @@ function planRun(pl){
   const nowCost  = held.reduce((t,r)=>t+(r.cost||0), 0);
   // วันเริ่มที่ผู้ใช้กำหนดมาก่อน ถ้าไม่ได้กำหนดจึงเดาจากวันซื้อครั้งแรกที่ระบุวันที่ไว้
   const first = state.tx.filter(t=>t.planId===pl.id && t.date).map(t=>t.date).sort()[0];
-  const start = pl.startDate || first || '';
+  // ลงเงินไปแล้วก่อนวันที่ตั้งใจไว้ ให้ยึดวันที่ซื้อจริง — เงินที่ใส่ไปแล้วเป็นข้อเท็จจริง วันที่ตั้งไว้เป็นความตั้งใจ
+  // ถ้ายึดวันที่ตั้งไว้ แผนจะถูกนับว่า "ยังไม่เริ่ม" ทั้งที่มีเงินอยู่จริง แล้วเส้นคาดการณ์จะเริ่มจากศูนย์
+  const start = (pl.startDate && first && first < pl.startDate) ? first : (pl.startDate || first || '');
   const elapsedRaw = start ? (Date.now()-Date.parse(start))/(365.25*864e5) : 0;
   const future = elapsedRaw < 0;                       // ตั้งวันเริ่มไว้ในอนาคต
   const elapsed = Math.max(0, elapsedRaw);
@@ -2397,7 +2409,10 @@ function draw(id, cfg){ if (charts[id]) charts[id].destroy(); charts[id] = new C
 buildForm();
 planUI();
 renderFunds();
-secInit().then(autoSyncFunds).then(renderInvestorAlerts);
+// แต่ละขั้นต้องพังได้โดยไม่ลากขั้นถัดไปลงไปด้วย — ถ้าตามข้อมูลไม่สำเร็จ ก็ยังต้องเห็น Investor Alert
+secInit()
+  .then(autoSyncFunds).catch(e=>console.warn('ตามข้อมูล ก.ล.ต. รอบล่าสุดไม่สำเร็จ:', e))
+  .then(renderInvestorAlerts).catch(e=>console.warn('แสดง Investor Alert ไม่สำเร็จ:', e));
 try{ const t = localStorage.getItem(KEY+'.tab'); if (t && $('#panel-'+t)) showTab(t); }catch(e){}
 try{ const sec = localStorage.getItem(KEY+'.sec'); if (sec) showSection(sec); }catch(e){}
 // Chart.js bakes the palette in when a chart is built, so switching theme needs a redraw.

@@ -599,6 +599,7 @@ def main():
         write_json(os.path.join(funds_dir, f"{amc}.json"), {"amcId": amc, "items": recs})
     write_json(index_path, {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "hasAlerts": alerts is not None,   # หน้าเว็บจะได้ไม่ต้องยิงหาไฟล์ที่ไม่มี แล้วได้ 404 ทุกครั้ง
         "source": "SEC Open API (api.sec.or.th) — ข้อมูลจาก Fund Fact Sheet ที่ บลจ. รายงานต่อ ก.ล.ต.",
         "mode": args.mode,
         "count": len(index_items),
