@@ -79,6 +79,10 @@ def set_output(name, value):
 
 
 EMPTY_RETRIES = 2
+# ทางสำรองเมื่อ latest=true ไม่คืนข้อมูล: ดึงตามช่วงวันที่ของแฟกต์ชีตแทน
+# แฟกต์ชีตออกรายเดือน 75 วันจึงครอบคลุมสองรอบล่าสุด และ latest_rows() จะเลือกรอบใหม่สุดต่อกองเองอยู่แล้ว
+DATED_FALLBACK_DAYS = 75
+DATED_FALLBACK_PAGES = 2500
 
 
 def fetch_all(path, params=None):
@@ -164,9 +168,20 @@ def collect_all():
     """Bulk mode: every endpoint is paginated on its own, so the downloads run side by side
     (SEC_WORKERS at a time); the API spends ~1.7 s per page, which made a sequential run ~100 min."""
     today = date.today()
+    def fetch_dataset(path, dated):
+        """latest=true คือทางปกติ แต่ถ้าฝั่ง ก.ล.ต. ไม่คืนอะไรเลยทั้งที่ชุดข้อมูลยังมีอยู่
+        (performance เป็นแบบนี้ตั้งแต่ 18 ก.ย. 2026 — ตอบ 200 หน้าเดียว 0 แถว ใน 1 วินาที
+        ขณะที่ชุดอื่นที่ส่งพารามิเตอร์เหมือนกันยังได้ข้อมูลครบ) ให้ลองดึงตามช่วงวันที่แทน"""
+        rows = fetch_all(path, {"latest": "true"} if dated else None)
+        if rows or not dated:
+            return rows
+        since = (date.today() - timedelta(days=DATED_FALLBACK_DAYS)).isoformat()
+        warn(f"{path}: latest=true ไม่คืนข้อมูล — ลองดึงแฟกต์ชีตตั้งแต่ {since} แทน")
+        return fetch_probe(path, {"start_date": since}, DATED_FALLBACK_PAGES) or []
+
     jobs = {"profiles": fetch_profiles}
     for key, (path, _, dated) in sec.DATASETS.items():
-        jobs[key] = (lambda p=path, d=dated: fetch_all(p, {"latest": "true"} if d else None))
+        jobs[key] = (lambda p=path, d=dated: fetch_dataset(p, d))
     # ปันผลไม่มีพารามิเตอร์กรองวันที่ จึงต้องดึงประวัติทั้งหมดแล้วมาตัดเองใน dividend_stats
     def fetch_portfolio():
         """พอร์ตเต็มของไตรมาสที่ปิดล่าสุดที่มีข้อมูล — ถอยทีละไตรมาสเพราะ บลจ. ส่งช้าไม่เท่ากัน"""
