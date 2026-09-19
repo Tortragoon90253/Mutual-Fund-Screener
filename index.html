@@ -287,6 +287,20 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     <select id="planPick"></select>
   </label>
   <span class="stamp" id="dataStamp"></span>
+  <details class="topmenu" id="meMenu">
+    <summary aria-label="วันเกิดของคุณ">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="8" cy="5.4" r="2.7"/><path d="M2.8 14c0-2.7 2.3-4.3 5.2-4.3s5.2 1.6 5.2 4.3"/>
+      </svg><span id="ageChip">อายุ</span>
+    </summary>
+    <div class="topmenu-panel">
+      <h3>วันเกิดของคุณ
+        <i class="info" tabindex="0" role="note" aria-label="ใส่วันเกิดไปทำไม">i<span class="tip">ใส่แล้วโปรแกรมจะบอกว่าแต่ละช่วงเวลาในกราฟและในแผน คุณอายุเท่าไร — เก็บไว้ในเบราว์เซอร์นี้เท่านั้น เหมือนข้อมูลอื่นทั้งหมด</span></i>
+      </h3>
+      <label class="f">วันเกิด<input type="date" id="birthDate"></label>
+      <p class="io-hint" id="ageNote"></p>
+    </div>
+  </details>
   <details class="topmenu" id="dataMenu">
     <summary aria-label="ย้ายข้อมูลไปเครื่องอื่น">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

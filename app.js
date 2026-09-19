@@ -149,7 +149,7 @@ function freshPlan(name){
 function freshState(){
   const funds = SAMPLES.map(s=>({...s, id:uid(), sample:true}));
   const pl = freshPlan(); pl.fundIds = funds.map(f=>f.id);
-  return {funds, plans:[pl], activePlan: pl.id, tx: [], changes: [], showReal:false};
+  return {funds, plans:[pl], activePlan: pl.id, tx: [], changes: [], birth:'', showReal:false};
 }
 // funds คือคลังกลาง (ข้อมูลกองเป็นข้อเท็จจริงของกอง) · fundIds คือกองที่แผนนี้เลือกไว้
 // เอากองออกจากแผนหนึ่งต้องไม่กระทบแผนอื่นที่เลือกกองเดียวกัน
@@ -325,6 +325,13 @@ function sanitizeChange(c){
   return {at, fund, fid: cleanStr(c.fid,16), label, from: cleanStr(c.from,60), to: cleanStr(c.to,60),
           dir: cleanEnum(c.dir, ['good','bad',''], '')};
 }
+/* วันเกิดใช้ช่วงคนละแบบกับวันที่ทำรายการ — okDate ตัดทุกอย่างก่อนปี 1990 ทิ้ง ซึ่งตัดคนส่วนใหญ่ทิ้งไปด้วย */
+function okBirth(d){
+  if (typeof d!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const t = new Date(d+'T00:00:00Z');
+  if (isNaN(t) || t.toISOString().slice(0,10)!==d) return false;
+  return d >= '1900-01-01' && d <= todayISO();
+}
 function sanitizeState(s){
   if (!s || typeof s!=='object' || !Array.isArray(s.funds)) return null;
   const funds = s.funds.slice(0,500).map(sanitizeFund).filter(Boolean);
@@ -351,7 +358,8 @@ function sanitizeState(s){
   const used = new Set(plans.flatMap(pl=>pl.fundIds).concat(tx.map(t=>t.fundId)));
   return bindPlan({funds: funds.filter(f=>used.has(f.id)),
                    plans, activePlan: planIds.has(active) ? active : plans[0].id,
-                   tx, changes, showReal: s.showReal===true});
+                   tx, changes, birth: okBirth(s.birth) ? s.birth : '',
+                   showReal: s.showReal===true});
 }
 
 /* ============ helpers ============ */
@@ -360,6 +368,21 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;'
 const has = v => v !== '' && v !== null && v !== undefined && !isNaN(parseFloat(v));
 const num = (v, d=0) => has(v) ? parseFloat(v) : d;
 const todayISO = () => new Date().toISOString().slice(0,10);
+/* อายุ ณ วันที่หนึ่ง — นับแบบวันเกิดยังไม่ถึงในปีนั้นให้ลบหนึ่ง ไม่ใช่เอาปีลบปีเฉยๆ */
+function ageAt(iso){
+  if (!state.birth || !iso) return null;
+  const b = new Date(state.birth+'T00:00:00Z'), d = new Date(iso+'T00:00:00Z');
+  if (isNaN(b) || isNaN(d)) return null;
+  let a = d.getUTCFullYear() - b.getUTCFullYear();
+  const m = d.getUTCMonth() - b.getUTCMonth();
+  if (m < 0 || (m === 0 && d.getUTCDate() < b.getUTCDate())) a--;
+  return a >= 0 ? a : null;
+}
+// อายุหลังจากนี้ไป m เดือน ใช้กับแกนกราฟที่นับเป็นเดือนจากวันนี้
+function ageInMonths(m){
+  const t = new Date();
+  return ageAt(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth()+m, t.getUTCDate())).toISOString().slice(0,10));
+}
 /* th-TH ใช้ปฏิทินพุทธเป็นค่าตั้งต้น จะได้ 2569 ต้องต่อท้าย -u-ca-gregory ถึงจะได้ ค.ศ. */
 const fmtWhen = iso => { const d = new Date(iso);
   return isNaN(d) ? '-' : d.toLocaleString('th-TH-u-ca-gregory', {dateStyle:'medium', timeStyle:'short'}); };
@@ -1401,6 +1424,25 @@ function importFrom(file){
   reader.readAsText(file);
 }
 
+function syncBirth(){
+  const el = $('#birthDate'); if (!el) return;
+  el.value = state.birth || '';
+  const a = ageAt(todayISO());
+  const chip = $('#ageChip'), note = $('#ageNote');
+  if (chip) chip.textContent = a==null ? 'อายุ' : `${a} ปี`;
+  if (note) note.textContent = a==null
+    ? 'ยังไม่ได้ใส่ — ใส่แล้วกราฟและตารางแผนจะบอกอายุของคุณในแต่ละช่วงเวลา'
+    : `วันนี้อายุ ${a} ปี · กราฟและตารางแผนจะบอกอายุในแต่ละช่วงเวลาให้`;
+}
+$('#birthDate') && $('#birthDate').addEventListener('change', e=>{
+  state.birth = okBirth(e.target.value) ? e.target.value : '';
+  if (e.target.value && !state.birth) e.target.value = '';
+  save(); syncBirth();
+  if ($('#section-home').classList.contains('active')) renderHome();
+  if ($('#panel-plan') && $('#panel-plan').classList.contains('active')) renderPlan();
+});
+syncBirth();
+
 $('#btnExport') && $('#btnExport').addEventListener('click', exportState);
 ['merge','replace'].forEach(m=>{
   const b = $(m==='merge' ? '#btnImportMerge' : '#btnImportReplace');
@@ -1410,12 +1452,11 @@ $('#fileImport') && $('#fileImport').addEventListener('change', e=>{
   const f = e.target.files && e.target.files[0]; if (f) importFrom(f); });
 // <details> ไม่ปิดตัวเองเมื่อคลิกที่อื่น ต้องสั่งเอง ไม่งั้นแผงจะค้างทับเนื้อหา
 document.addEventListener('click', e=>{
-  const m = $('#dataMenu');
-  if (m && m.open && !m.contains(e.target)) m.open = false;
+  document.querySelectorAll('.topmenu[open]').forEach(m=>{ if (!m.contains(e.target)) m.open = false; });
 });
 document.addEventListener('keydown', e=>{
-  const m = $('#dataMenu');
-  if (e.key==='Escape' && m && m.open){ m.open = false; m.querySelector('summary').focus(); }
+  if (e.key!=='Escape') return;
+  document.querySelectorAll('.topmenu[open]').forEach(m=>{ m.open = false; m.querySelector('summary').focus(); });
 });
 
 $('#btnWipe').addEventListener('click', ()=>{
@@ -1866,7 +1907,10 @@ function renderOverview(){
         : '–'}</td>
       <td><span class="bar-cell"><i style="width:${Math.round(r.left/maxY*100)}%;background:var(${hue(r)})"></i></span></td>
       <td class="num">${r.nowValue?fmtB(r.nowValue):'<span class="muted">ยังไม่ซื้อ</span>'}</td>
-      <td>${r.start?`<span class="muted" style="font-size:.8rem">${esc(r.start)} → ${esc(r.endDate)}</span>`:'<span class="muted" style="font-size:.8rem">ยังไม่กำหนด</span>'}</td>
+      <td>${r.start?`<span class="muted" style="font-size:.8rem">${esc(r.start)} → ${esc(r.endDate)}${(()=>{
+        const a = ageAt(r.start), b = ageAt(r.endDate);
+        return (a!=null && b!=null) ? `<br>อายุ ${a} → ${b} ปี` : ''; })()}</span>`
+        :'<span class="muted" style="font-size:.8rem">ยังไม่กำหนด</span>'}</td>
       <td class="num" ${diff!=null?`style="color:var(${diff>=0?'--good':'--bad'})"`:''}>${diff!=null?`${diff>=0?'+':'−'}${fmtB(Math.abs(diff))}`:'–'}</td>
       <td class="num">${r.dcaLeft ? fmtB(r.monthly*r.dcaLeft) : '<span class="muted">–</span>'}</td>
       <td class="num">${r.matured ? '<span class="muted">ครบกำหนดแล้ว</span>'
@@ -1937,7 +1981,13 @@ function renderOverview(){
           }},
                 y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
         plugins:{legend:{position:'bottom'},
-          tooltip:{callbacks:{label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
+          tooltip:{callbacks:{
+            // แกนเป็นเดือนนับจากวันนี้ ส่วนช่วงอดีตมีวันที่จริงอยู่แล้ว จึงคิดอายุคนละทาง
+            title:items=>{ const i = items[0].dataIndex;
+              const a = past.length ? (i < past.length ? ageAt(past[i].date) : ageInMonths(i - (past.length-1)))
+                                    : ageInMonths(i);
+              return labels[i] + (a!=null ? ` · อายุ ${a} ปี` : ''); },
+            label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
     // ต้องรอให้ Chart.js วาดจบก่อน ถึงจะรู้พิกัดของจุดสุดท้าย
     if (past.length) setTimeout(startPulse, 0); else stopPulse();
   } else { stopPulse(); if (charts['ovChart']){ charts['ovChart'].destroy(); delete charts['ovChart']; } }
@@ -2352,9 +2402,17 @@ function renderPlan(){
   const moneyTick = {callback:v=>fmtShort(v)};
   const tip = {callbacks:{label:c=>`${c.dataset.label}: ${fmtB(c.parsed.y)}`}};
   const baseOpts = {responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-    plugins:{legend:{position:'bottom',labels:{boxWidth:12,usePointStyle:true}}, tooltip:tip},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:12,usePointStyle:true}},
+      tooltip:{...tip, callbacks:{...tip.callbacks,
+        title:items=>{ const a = ageInYear(items[0].dataIndex);
+          return labels[items[0].dataIndex] + (a!=null ? ` · อายุ ${a} ปี` : ''); }}}},
     scales:{x:{grid:{display:false}}, y:{grid:{color:C.grid}, ticks:moneyTick, beginAtZero:true}}};
   const labels = mid.map(r=>'ปี '+r.year);
+  // ปีที่ N ของแผนนี้ตรงกับอายุเท่าไร — ต้องรู้วันเริ่มจริงของแผน ซึ่ง planRun คำนวณให้แล้ว
+  const planStart = planRun(activePlan()).start;
+  const ageInYear = y => { if (!planStart) return null;
+    const d = new Date(planStart+'T00:00:00Z');
+    return ageAt(new Date(Date.UTC(d.getUTCFullYear()+y, d.getUTCMonth(), d.getUTCDate())).toISOString().slice(0,10)); };
   const line = (label, data, color, extra={}) => ({label, data, borderColor:color, backgroundColor:color, pointRadius:years>20?0:2, borderWidth:2, tension:.2, ...extra});
 
   const ds = [
@@ -2387,8 +2445,9 @@ function renderPlan(){
       line('ถ้า TER 0.2% ไม่มีค่าซื้อขาย', cheap.map(r=>r.value), C.good, {borderDash:[6,4]})]}, options:baseOpts});
 
   // table
-  $('#yearTable').innerHTML = `<thead><tr><th>ปี</th><th class="num">เงินต้นสะสม</th><th class="num">กรณีแย่</th><th class="num">กรณีกลาง</th><th class="num">กรณีดี</th><th class="num">กลาง (หลังเงินเฟ้อ)</th><th class="num">ค่าธรรมเนียมสะสม</th></tr></thead><tbody>${
-    mid.map((r,i)=>`<tr><td>${r.year}</td><td class="num">${fmtB(r.principal)}</td><td class="num">${fmtB(bad[i].value)}</td><td class="num"><b>${fmtB(r.value)}</b></td><td class="num">${fmtB(good[i].value)}</td><td class="num">${fmtB(real[i])}</td><td class="num">${fmtB(r.fees)}</td></tr>`).join('')}</tbody>`;
+  const ageCol = ageInYear(0) != null;
+  $('#yearTable').innerHTML = `<thead><tr><th>ปี</th>${ageCol?'<th class="num">อายุ</th>':''}<th class="num">เงินต้นสะสม</th><th class="num">กรณีแย่</th><th class="num">กรณีกลาง</th><th class="num">กรณีดี</th><th class="num">กลาง (หลังเงินเฟ้อ)</th><th class="num">ค่าธรรมเนียมสะสม</th></tr></thead><tbody>${
+    mid.map((r,i)=>`<tr><td>${r.year}</td>${ageCol?`<td class="num">${ageInYear(r.year)}</td>`:''}<td class="num">${fmtB(r.principal)}</td><td class="num">${fmtB(bad[i].value)}</td><td class="num"><b>${fmtB(r.value)}</b></td><td class="num">${fmtB(good[i].value)}</td><td class="num">${fmtB(real[i])}</td><td class="num">${fmtB(r.fees)}</td></tr>`).join('')}</tbody>`;
 
   // advice
   const adv = [];
