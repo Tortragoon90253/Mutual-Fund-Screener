@@ -83,15 +83,18 @@ EMPTY_RETRIES = 2
 # แฟกต์ชีตออกรายเดือน 75 วันจึงครอบคลุมสองรอบล่าสุด และ latest_rows() จะเลือกรอบใหม่สุดต่อกองเองอยู่แล้ว
 DATED_FALLBACK_DAYS = 75
 DATED_FALLBACK_PAGES = 2500
+# ทางสำรองสุดท้าย: ดึงทีละกองด้วย proj_id เมื่อการดึงแบบรวมไม่คืนอะไรเลย
+PER_FUND_MAX_CALLS = 3000
 
 
-def fetch_all(path, params=None):
+def fetch_all(path, params=None, retry_empty=True, quiet=False):
     """Download every page of one endpoint, stopping if the call budget would be exceeded.
 
     หน้าแรกที่ตอบ 200 พร้อมรายการว่างไม่ใช่ error โปรแกรมจึงเดินต่อเหมือนไม่มีข้อมูลจริง
     ชุดที่ว่างทั้งชุดจึงลองซ้ำอีกสองครั้งโดยเว้นช่วง — ถ้าเป็นอาการชั่วคราวจะได้กลับมาเอง
     ถ้ายังว่างก็แปลว่าว่างจริงหรือโดนจำกัดสิทธิ์ ซึ่งผู้เรียกจะรายงานต่อ"""
-    for attempt in range(EMPTY_RETRIES + 1):
+    tries = EMPTY_RETRIES if retry_empty else 0
+    for attempt in range(tries + 1):
         items, cursor, pages = [], None, 0
         started = time.time()
         while True:
@@ -106,10 +109,11 @@ def fetch_all(path, params=None):
             cursor = data.get("next_cursor")
             if not cursor:
                 break
-        if items or attempt == EMPTY_RETRIES:
-            log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
+        if items or attempt == tries:
+            if not quiet:
+                log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
             return items
-        warn(f"{path}: ได้ 0 แถว — รออีก 15 วินาทีแล้วลองใหม่ (ครั้งที่ {attempt + 2} จาก {EMPTY_RETRIES + 1})")
+        warn(f"{path}: ได้ 0 แถว — รออีก 15 วินาทีแล้วลองใหม่ (ครั้งที่ {attempt + 2} จาก {tries + 1})")
         time.sleep(15)
     return []
 
@@ -151,6 +155,37 @@ def fetch_probe(path, params, max_pages):
             break
     log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
     return items
+
+
+def recover_per_fund(path, label, profiles):
+    """ดึงทีละกองเมื่อการดึงแบบรวมคืน 0 แถว.
+
+    ทดสอบกับกองเดียวก่อน ถ้ากองนั้นได้ข้อมูลแปลว่าตารางมีข้อมูลอยู่ แต่การ query แบบรวม
+    (ทั้ง latest=true และกรองตามวันที่) เสีย — จึงคุ้มที่จะไล่ทีละกอง ถ้ากองตัวอย่างก็ว่าง
+    แปลว่าตารางไม่มีข้อมูลจริง เลิกตั้งแต่เสียไป 1 ครั้ง"""
+    ids = []
+    for p in profiles:
+        pid = p.get("proj_id")
+        if pid and pid not in ids:
+            ids.append(pid)
+    if not ids:
+        return []
+    probe = fetch_all(path, {"proj_id": ids[0], "latest": "true"}, retry_empty=False, quiet=True)
+    if not probe:
+        warn(f"{label}: ดึงรายกองก็ไม่ได้ข้อมูล — ตารางฝั่ง ก.ล.ต. ไม่มีข้อมูลในตอนนี้")
+        return []
+    log(f"  {label}: ดึงแบบรวมไม่ได้ แต่รายกองได้ — ไล่ทีละกอง {len(ids):,} กอง")
+    rows, started, spent = list(probe), time.time(), 1
+    for pid in ids[1:]:
+        if spent >= PER_FUND_MAX_CALLS or sec.CALLS["network"] >= MAX_CALLS:
+            warn(f"{label}: ไล่รายกองได้ {spent:,} กองแล้วชนเพดาน — ข้อมูลไม่ครบทุกกอง")
+            break
+        rows.extend(fetch_all(path, {"proj_id": pid, "latest": "true"}, retry_empty=False, quiet=True))
+        spent += 1
+        if spent % 250 == 0:
+            log(f"    …{spent:,}/{len(ids):,} กอง · {len(rows):,} แถว")
+    log(f"  {label}: รายกองรวม {len(rows):,} แถว จาก {spent:,} กอง ({time.time() - started:.0f} วินาที)")
+    return rows
 
 
 def fetch_profiles():
@@ -219,6 +254,16 @@ def collect_all():
                 for f in futures:
                     f.cancel()
                 raise
+
+    # ชุดที่ดึงแบบรวมไม่ได้เลย ลองดึงทีละกอง — ทำหลังจบขั้นขนาน เพราะต้องใช้รายชื่อกองจาก profiles
+    for key, (path, _, dated) in sec.DATASETS.items():
+        if results.get(key) or not dated:
+            continue
+        got = recover_per_fund(path, sec.DATASET_LABELS.get(key, key), results.get("profiles") or [])
+        if got:
+            results[key] = got
+        else:
+            notes.append(f"ดึง{sec.DATASET_LABELS.get(key, key)}ไม่ได้ทั้งแบบรวมและแบบรายกอง")
 
     # endpoint ที่ตอบ 200 พร้อมรายการว่างไม่ใช่ error ต้องประกาศออกมาเอง ไม่งั้นจะเงียบ
     for key, rows in results.items():
