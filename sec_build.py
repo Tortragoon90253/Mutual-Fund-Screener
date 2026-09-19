@@ -78,24 +78,36 @@ def set_output(name, value):
             f.write(f"{name}={value}\n")
 
 
+EMPTY_RETRIES = 2
+
+
 def fetch_all(path, params=None):
-    """Download every page of one endpoint, stopping if the call budget would be exceeded."""
-    items, cursor, pages = [], None, 0
-    started = time.time()
-    while True:
-        if sec.CALLS["network"] >= MAX_CALLS:
-            raise BudgetExceeded(f"ใช้ API ครบ {MAX_CALLS} ครั้งแล้ว (หยุดที่ {path}) — ตั้ง SEC_MAX_CALLS ให้สูงขึ้นหรือใช้ --mode watchlist")
-        p = dict(params or {}, page_size=100)
-        if cursor:
-            p["next_cursor"] = cursor
-        data = sec.api_get(path, p)
-        pages += 1
-        items.extend(data.get("items") or [])
-        cursor = data.get("next_cursor")
-        if not cursor:
-            break
-    log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
-    return items
+    """Download every page of one endpoint, stopping if the call budget would be exceeded.
+
+    หน้าแรกที่ตอบ 200 พร้อมรายการว่างไม่ใช่ error โปรแกรมจึงเดินต่อเหมือนไม่มีข้อมูลจริง
+    ชุดที่ว่างทั้งชุดจึงลองซ้ำอีกสองครั้งโดยเว้นช่วง — ถ้าเป็นอาการชั่วคราวจะได้กลับมาเอง
+    ถ้ายังว่างก็แปลว่าว่างจริงหรือโดนจำกัดสิทธิ์ ซึ่งผู้เรียกจะรายงานต่อ"""
+    for attempt in range(EMPTY_RETRIES + 1):
+        items, cursor, pages = [], None, 0
+        started = time.time()
+        while True:
+            if sec.CALLS["network"] >= MAX_CALLS:
+                raise BudgetExceeded(f"ใช้ API ครบ {MAX_CALLS} ครั้งแล้ว (หยุดที่ {path}) — ตั้ง SEC_MAX_CALLS ให้สูงขึ้นหรือใช้ --mode watchlist")
+            p = dict(params or {}, page_size=100)
+            if cursor:
+                p["next_cursor"] = cursor
+            data = sec.api_get(path, p)
+            pages += 1
+            items.extend(data.get("items") or [])
+            cursor = data.get("next_cursor")
+            if not cursor:
+                break
+        if items or attempt == EMPTY_RETRIES:
+            log(f"  {path}: {len(items):,} แถว / {pages} หน้า ({time.time() - started:.0f} วินาที)")
+            return items
+        warn(f"{path}: ได้ 0 แถว — รออีก 15 วินาทีแล้วลองใหม่ (ครั้งที่ {attempt + 2} จาก {EMPTY_RETRIES + 1})")
+        time.sleep(15)
+    return []
 
 
 # ---------------------------------------------------------------- collect
@@ -449,12 +461,16 @@ def main():
         pass
 
     diag = build_diag(amc_files)
-    lost = lost_fields((prev.get("diag") or {}).get("filled"), diag.get("filled") or {}) if diag else []
+    now_filled = diag.get("filled") or {}
+    # เทียบกับค่าสูงสุดที่เคยได้ ไม่ใช่รอบล่าสุด — ถ้าเผลอเผยแพร่รอบที่ข้อมูลขาดไปแล้ว
+    # รอบถัดไปจะเห็นว่า "เท่าเดิม" แล้วปล่อยผ่าน ทั้งที่ยังขาดอยู่
+    prev_best = prev.get("diagBest") or (prev.get("diag") or {}).get("filled") or {}
+    lost = lost_fields(prev_best, now_filled) if diag else []
     if lost and os.environ.get("SEC_ALLOW_LOSS") != "1":
         for line in lost:
             warn(f"ข้อมูลหายเทียบกับรอบก่อน: {line}")
-        log("ไม่เผยแพร่ทับข้อมูลเดิม — endpoint น่าจะล่มชั่วคราว ให้รันใหม่ "
-            "(ถ้าข้อมูลหายจริงและตั้งใจ ตั้ง SEC_ALLOW_LOSS=1)")
+        log("ไม่เผยแพร่ทับข้อมูลเดิม — endpoint น่าจะล่มหรือถูกจำกัดสิทธิ์ชั่วคราว ให้รันใหม่ภายหลัง "
+            "(ถ้าข้อมูลหายจริงและตั้งใจ ตั้ง SEC_ALLOW_LOSS=1 เพื่อรับค่าใหม่เป็นฐาน)")
         set_output("changed", "false")
         return 1
 
@@ -478,7 +494,9 @@ def main():
         "stats": {"apiCalls": sec.CALLS["network"], "seconds": round(time.time() - started)},
         "terPct": pct_breaks(amc_files, "ter"),          # ค่าธรรมเนียมเทียบในกลุ่มเดียวกัน
         "sharpePct": pct_breaks(amc_files, "sharpe", positive_only=False),  # ผลตอบแทนต่อความเสี่ยง
-        "diag": diag,                      # ขั้น 0: ความครบของข้อมูล ใช้ตัดสินใจว่าจะสร้างเกณฑ์ใหม่ได้ไหม
+        "diag": diag,                      # ความครบของข้อมูลรอบนี้
+        "diagBest": {k: max(prev_best.get(k, 0), now_filled.get(k, 0))
+                     for k in set(prev_best) | set(now_filled)},   # ฐานเทียบกันข้อมูลหาย
         "fields": INDEX_FIELDS,
         "rows": index_items,
     })
