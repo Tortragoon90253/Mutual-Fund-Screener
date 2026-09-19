@@ -1488,6 +1488,7 @@ function renderHoldings(){
   $('#holdNote').textContent = asOf ? `ราคาต่อหน่วย ณ ${asOf} · มูลค่าคำนวณจากราคานี้ ไม่ใช่ราคาเรียลไทม์` : '';
 
   renderTxTable();
+  renderOverlap(rows, totV);
 
   const byClass = {};
   rows.forEach(r=>{ if (r.value!=null) byClass[r.f.assetClass] = (byClass[r.f.assetClass]||0) + r.value; });
@@ -1505,6 +1506,35 @@ function renderHoldings(){
   if (rows.length===1) al.push(['', 'พอร์ตมีกองเดียว — กระจายไปสินทรัพย์หรือภูมิภาคอื่นเพื่อลดความเสี่ยง']);
   if (!rows.length) al.push(['', 'บันทึกรายการซื้อในกล่องด้านล่างเพื่อเริ่มติดตามพอร์ต']);
   $('#holdAlerts').innerHTML = al.map(([c,t])=>`<div class="callout ${c}">${esc(t)}</div>`).join('');
+}
+/* หลักทรัพย์ที่กองในพอร์ตถือซ้ำกัน
+   คิดจาก 10 อันดับแรกของแต่ละกอง (เท่าที่เก็บไว้) จึงเป็นค่าต่ำสุด ของจริงซ้ำมากกว่านี้ */
+function renderOverlap(rows, totV){
+  const box = $('#overlapTable'); if (!box) return;
+  const held = rows.filter(r=>r.value && r.f.sec && r.f.sec.port && (r.f.sec.port.top||[]).length);
+  const byCode = {};
+  held.forEach(r=>{
+    const w = r.value/totV;
+    r.f.sec.port.top.forEach(([code, pct])=>{
+      // ข้อมูลที่ดึงก่อนมีตัวกรองแถวสรุปยอดอาจมี "-" ที่ 100% ค้างอยู่ในเบราว์เซอร์ผู้ใช้
+      if (!code || code === '-' || pct >= 100) return;
+      const e = byCode[code] || (byCode[code] = {pct:0, funds:[]});
+      e.pct += w*pct;
+      e.funds.push(r.f.name.split(' —')[0]);
+    });
+  });
+  const dup = Object.entries(byCode).filter(([,e])=>e.funds.length>1).sort((a,b)=>b[1].pct-a[1].pct);
+  const share = dup.reduce((t,[,e])=>t+e.pct, 0);
+  box.innerHTML = dup.length ? `<thead><tr><th>หลักทรัพย์</th><th class="num">% ของพอร์ต</th><th class="num">อยู่ในกี่กอง</th><th>กองที่ถือ</th></tr></thead><tbody>${
+    dup.slice(0,12).map(([code,e])=>`<tr>
+      <td>${esc(code)}</td>
+      <td class="num" ${e.pct>=10?'style="color:var(--warn)"':''}>${e.pct.toFixed(2)}%</td>
+      <td class="num">${e.funds.length}</td>
+      <td class="muted" style="white-space:normal">${esc(e.funds.join(' · '))}</td></tr>`).join('')}</tbody>`
+    : `<tbody><tr><td class="muted">${held.length<2 ? 'ต้องถืออย่างน้อย 2 กองที่มีข้อมูลพอร์ตจึงจะเทียบได้' : 'ไม่พบหลักทรัพย์ที่ซ้ำกันใน 10 อันดับแรกของแต่ละกอง'}</td></tr></tbody>`;
+  $('#overlapNote').textContent = dup.length
+    ? `รวม ${share.toFixed(1)}% ของพอร์ตอยู่ในหลักทรัพย์ที่ถือซ้ำกัน · คิดจาก 10 อันดับแรกของแต่ละกองเท่านั้น ของจริงซ้ำมากกว่านี้`
+    : '';
 }
 function renderTxTable(){
   const box = $('#txTable'); if (!box) return;
