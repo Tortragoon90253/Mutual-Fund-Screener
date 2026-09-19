@@ -330,6 +330,21 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
     </div>
     <div class="scroll" style="margin-top:12px"><table id="txTable"></table></div>
   </div>
+  <div class="card">
+    <h2>ย้ายข้อมูลไปเครื่องอื่น</h2>
+    <p class="sub">ข้อมูลทั้งหมดอยู่ในเบราว์เซอร์เครื่องนี้เครื่องเดียว ไม่มีเซิร์ฟเวอร์เก็บให้ — จะใช้ที่เครื่องอื่นต้องส่งไฟล์ไปเอง</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button class="btn primary small" type="button" id="btnExport">บันทึกเป็นไฟล์ (Export)</button>
+      <button class="btn small" type="button" id="btnImportMerge">นำเข้า — รวมกับของเดิม</button>
+      <button class="btn small danger" type="button" id="btnImportReplace">นำเข้า — แทนที่ทั้งหมด</button>
+      <input type="file" id="fileImport" accept="application/json,.json" style="display:none">
+    </div>
+    <p class="muted" id="ioHint" style="margin:10px 0 0;font-size:.85rem"></p>
+    <ul class="muted" style="margin:10px 0 0;padding-left:18px;font-size:.85rem;line-height:1.7">
+      <li><b>รวมกับของเดิม</b> — แผนที่ชื่อตรงกันถือเป็นแผนเดียวกัน · กองทุนเดียวกันไม่ถูกเพิ่มซ้ำ · รายการซื้อขายที่เหมือนกันทุกช่องจะถูกข้าม จึงนำเข้าไฟล์เดิมซ้ำได้โดยยอดไม่บวกเพิ่ม</li>
+      <li><b>แทนที่ทั้งหมด</b> — ลบของเดิมในเครื่องนี้ทิ้งแล้วใช้ของในไฟล์แทน เหมาะกับการมีเครื่องหลักเครื่องเดียวแล้วคัดลอกไปเครื่องรอง</li>
+    </ul>
+  </div>
   <div class="two">
     <div class="card">
       <h2>สัดส่วนตามประเภทสินทรัพย์</h2>
@@ -442,11 +457,9 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
       <div class="row">
         <button class="btn small" id="btnSamples">โหลดกองตัวอย่าง</button>
         <button class="btn small danger" id="btnClearSamples">ลบกองตัวอย่าง</button>
-        <button class="btn small" id="btnExport">Export JSON</button>
-        <label class="btn small" style="cursor:pointer">Import JSON<input type="file" id="fileImport" accept=".json,application/json" hidden></label>
       </div>
     </div>
-    <p class="sub" style="margin-top:6px">กองที่มีป้าย <span class="tag">ตัวอย่าง</span> เป็นข้อมูลสมมติเพื่อทดลองใช้เท่านั้น ไม่ใช่ข้อมูลกองทุนจริง</p>
+    <p class="sub" style="margin-top:6px">กองที่มีป้าย <span class="tag">ตัวอย่าง</span> เป็นข้อมูลสมมติเพื่อทดลองใช้เท่านั้น ไม่ใช่ข้อมูลกองทุนจริง · การบันทึกเป็นไฟล์และนำเข้าย้ายไปอยู่ที่หน้า “พอร์ตของฉัน” แล้ว</p>
     <div class="fund-list" id="fundList"></div>
   </div>
 </section>

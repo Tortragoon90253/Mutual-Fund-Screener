@@ -1222,6 +1222,116 @@ $('#fundList').addEventListener('click', async e=>{
     if (editingId===del) fillForm(null);
     save(); renderFunds(); }
 });
+/* ============ ย้ายข้อมูลข้ามเครื่อง ============
+   ทุกอย่างอยู่ใน localStorage ซึ่งผูกกับเบราว์เซอร์และโดเมนเดียว ไม่มีเซิร์ฟเวอร์เก็บให้
+   การซิงก์อัตโนมัติจะต้องมีบัญชีผู้ใช้และที่เก็บกลาง ซึ่งขัดกับที่บอกไว้ว่าข้อมูลไม่ถูกส่งไปไหน
+   จึงเป็นไฟล์ที่ผู้ใช้ถือไปเอง — ช้ากว่าแต่ไม่ต้องฝากข้อมูลการเงินไว้กับใคร */
+const IO_TAG = 'fundscope';
+
+function exportState(){
+  // state มี profile/weights/portfolio เป็น getter แบบ non-enumerable จึงไม่ติดไปด้วย
+  // ทั้งสามค่าอ่านจากแผนที่เปิดอยู่ ซึ่งอยู่ใน plans อยู่แล้ว
+  const payload = {app:IO_TAG, v:1, at:new Date().toISOString(), state};
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 1)], {type:'application/json'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = `fundscope-${todayISO()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  const n = state.tx.length;
+  $('#ioHint').textContent = `บันทึกไฟล์แล้ว — ${state.plans.length} แผน · ${state.funds.length} กองทุน · ${n} รายการซื้อขาย · เก็บไฟล์นี้ไว้แล้วเปิดที่เครื่องอื่นด้วยปุ่ม "นำเข้า"`;
+}
+
+/* รวมข้อมูลจากไฟล์เข้ากับของเดิม โดยไม่ให้ยอดบวกซ้ำถ้านำไฟล์เดิมเข้ามาอีกรอบ
+   กองทุน: ถือว่าเป็นกองเดียวกันเมื่อ projId+cls ตรงกัน (กองที่กรอกเองใช้ชื่อ)
+   แผน: ถือว่าเป็นแผนเดียวกันเมื่อชื่อตรงกัน — ชื่อเป็นสิ่งที่ผู้ใช้ตั้งเองและไม่ค่อยซ้ำ
+   รายการซื้อขาย: ข้ามเมื่อทุกช่องเหมือนกันหมด */
+function mergeInto(cur, inc){
+  const keyF = f => (f.sec && f.sec.projId) ? `s:${f.sec.projId}|${f.sec.cls||''}` : `n:${f.name}`;
+  const fundKey = new Map(cur.funds.map(f=>[keyF(f), f.id]));
+  const fMap = {}, r = {funds:0, plans:0, tx:0, txSkip:0, planSame:0};
+
+  inc.funds.forEach(f=>{
+    const hit = fundKey.get(keyF(f));
+    if (hit){ fMap[f.id] = hit; return; }
+    let id = f.id; while (cur.funds.some(x=>x.id===id)) id = uid();
+    fMap[f.id] = id; cur.funds.push({...f, id}); fundKey.set(keyF(f), id); r.funds++;
+  });
+
+  const pMap = {};
+  inc.plans.forEach(pl=>{
+    const same = cur.plans.find(x=>x.name===pl.name);
+    if (same){ pMap[pl.id] = same.id; r.planSame++;
+      // กองที่แผนเดียวกันในอีกเครื่องเลือกไว้เพิ่ม ให้ตามมาด้วย ไม่งั้นรายการซื้อขายจะอ้างกองที่แผนไม่มี
+      pl.fundIds.forEach(x=>{ const id = fMap[x]; if (id && !same.fundIds.includes(id)) same.fundIds.push(id); });
+      return; }
+    let id = pl.id; while (cur.plans.some(x=>x.id===id)) id = uid();
+    pMap[pl.id] = id;
+    cur.plans.push({...pl, id,
+      fundIds: pl.fundIds.map(x=>fMap[x]).filter(Boolean),
+      portfolio: Object.fromEntries(Object.entries(pl.portfolio||{})
+        .map(([k,v])=>[fMap[k], v]).filter(([k])=>k))});
+    r.plans++;
+  });
+
+  const sig = t => [t.planId,t.fundId,t.kind,t.date,t.units,t.amount].join('|');
+  const seen = new Set(cur.tx.map(sig));
+  inc.tx.forEach(t=>{
+    const m = {...t, planId:pMap[t.planId], fundId:fMap[t.fundId]};
+    if (!m.planId || !m.fundId) return;
+    if (seen.has(sig(m))){ r.txSkip++; return; }
+    let id = m.id; while (cur.tx.some(x=>x.id===id)) id = uid();
+    cur.tx.push({...m, id}); seen.add(sig(m)); r.tx++;
+  });
+
+  const cSig = c => `${c.at}|${c.fund}|${c.label}`;
+  const haveC = new Set((cur.changes||[]).map(cSig));
+  (inc.changes||[]).forEach(c=>{ if (!haveC.has(cSig(c))){ cur.changes.push(c); haveC.add(cSig(c)); } });
+  cur.changes.sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  if (cur.changes.length > 300) cur.changes = cur.changes.slice(-300);
+  return r;
+}
+
+let importMode = 'merge';
+function importFrom(file){
+  const hint = $('#ioHint');
+  const reader = new FileReader();
+  reader.onerror = ()=>{ hint.textContent = 'อ่านไฟล์ไม่สำเร็จ'; };
+  reader.onload = ()=>{
+    let j;
+    try{ j = JSON.parse(reader.result); }
+    catch(e){ hint.textContent = 'ไฟล์นี้ไม่ใช่ JSON ที่อ่านได้ — ต้องเป็นไฟล์ที่ได้จากปุ่ม Export'; return; }
+    // รองรับทั้งไฟล์ที่ห่อด้วย {app,v,state} และไฟล์ที่เป็น state ตรงๆ
+    const raw = (j && j.app===IO_TAG && j.state) ? j.state : j;
+    const inc = sanitizeState(raw);
+    if (!inc){ hint.textContent = 'ไฟล์นี้ไม่มีข้อมูลของโปรแกรมนี้'; return; }
+
+    if (importMode==='replace'){
+      if (!confirm(`แทนที่ข้อมูลทั้งหมดในเครื่องนี้ด้วยไฟล์?\n\nของเดิมที่จะถูกลบ: ${state.plans.length} แผน · ${state.funds.length} กองทุน · ${state.tx.length} รายการ\nของใหม่จากไฟล์: ${inc.plans.length} แผน · ${inc.funds.length} กองทุน · ${inc.tx.length} รายการ\n\nย้อนกลับไม่ได้`)) return;
+      try{ localStorage.setItem(KEY, JSON.stringify(inc)); }catch(e){ hint.textContent = 'บันทึกลงเบราว์เซอร์ไม่สำเร็จ (พื้นที่เต็ม?)'; return; }
+      location.reload(); return;
+    }
+
+    // คำนวณผลบนสำเนาก่อน เพื่อบอกให้ครบว่าจะเกิดอะไรขึ้น แล้วค่อยถามยืนยัน
+    const draft = sanitizeState(JSON.parse(JSON.stringify(state)));
+    const r = mergeInto(draft, inc);
+    if (!r.funds && !r.plans && !r.tx){
+      hint.textContent = `ไม่มีอะไรใหม่ในไฟล์นี้ — ข้อมูลตรงกับที่มีอยู่แล้วทั้งหมด (ข้ามรายการซ้ำ ${r.txSkip} รายการ)`;
+      return; }
+    if (!confirm(`รวมข้อมูลจากไฟล์เข้ากับของเดิม?\n\nเพิ่ม: ${r.plans} แผน · ${r.funds} กองทุน · ${r.tx} รายการซื้อขาย\nแผนที่ชื่อตรงกันและถือเป็นแผนเดียวกัน: ${r.planSame}\nรายการซ้ำที่จะข้าม: ${r.txSkip}\n\nของเดิมไม่ถูกลบ`)) return;
+    try{ localStorage.setItem(KEY, JSON.stringify(draft)); }catch(e){ hint.textContent = 'บันทึกลงเบราว์เซอร์ไม่สำเร็จ (พื้นที่เต็ม?)'; return; }
+    location.reload();
+  };
+  reader.readAsText(file);
+}
+
+$('#btnExport') && $('#btnExport').addEventListener('click', exportState);
+['merge','replace'].forEach(m=>{
+  const b = $(m==='merge' ? '#btnImportMerge' : '#btnImportReplace');
+  b && b.addEventListener('click', ()=>{ importMode = m; $('#fileImport').value = ''; $('#fileImport').click(); });
+});
+$('#fileImport') && $('#fileImport').addEventListener('change', e=>{
+  const f = e.target.files && e.target.files[0]; if (f) importFrom(f); });
+
 $('#btnWipe').addEventListener('click', ()=>{
   if (!confirm('ลบข้อมูลโปรไฟล์ กองทุน และพอร์ตทั้งหมดที่เก็บในเบราว์เซอร์นี้? (ควร Export JSON ไว้ก่อนถ้าต้องการเก็บ)')) return;
   try{ localStorage.removeItem(KEY); localStorage.removeItem(KEY+'.tab'); localStorage.removeItem(KEY+'.sec'); }catch(e){}
@@ -1237,16 +1347,6 @@ $('#btnClearSamples').addEventListener('click', ()=>{
   const nTx = state.tx.filter(t=>ids.includes(t.fundId)).length;
   if (nTx && !confirm(`กองตัวอย่างมีรายการซื้อขาย ${nTx} รายการ จะถูกลบไปด้วย ต้องการลบหรือไม่?`)) return;
   removeFunds(ids); save(); renderFunds(); });
-$('#btnExport').addEventListener('click', ()=>{
-  const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'fund-screener-data.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-});
-$('#fileImport').addEventListener('change', e=>{
-  const file = e.target.files[0]; if (!file) return;
-  file.text().then(t=>{ const s=sanitizeState(JSON.parse(t)); if (!s) throw 0; state=s; save(); location.reload(); })
-    .catch(()=>alert('ไฟล์ไม่ถูกต้อง'));
-});
-
 /* ============ UI: screening ============ */
 let selectedFundId = null;
 function renderFundPanel(res){
