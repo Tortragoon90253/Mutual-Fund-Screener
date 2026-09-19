@@ -1,4 +1,0 @@
-{
- "version":"0.0.1",
- "configurations":[{"name":"screener","runtimeExecutable":"py","runtimeArgs":["-3","sec_server.py"],"port":8765,"url":"http://127.0.0.1:8765"}]
-}
