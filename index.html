@@ -200,6 +200,19 @@ details.fund-detail summary{cursor:pointer;font-weight:600;list-style-position:o
 .two{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .two>*,.card{min-width:0}
 @media (max-width:760px){.two{grid-template-columns:minmax(0,1fr)}.chart-box{height:280px}header h1{font-size:1.3rem}}
+/* แถบเมนูล่างบนมือถือ — ปุ่มชุดเดียวกับ .mainnav ด้านบน จึงใช้ตัวจัดการคลิกและสถานะ active ร่วมกัน */
+.botnav{display:none}
+@media (max-width:720px){
+  .topbar .mainnav{display:none}
+  .topbar .stamp{display:none}
+  .planpick select{min-width:0;max-width:56vw}
+  .botnav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;gap:0;background:var(--surface);border-top:1px solid var(--border);padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+  .botnav button{flex:1 1 0;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;border-radius:8px;background:transparent;color:var(--muted);font-size:.7rem;font-weight:600}
+  .botnav button.active{background:transparent;color:var(--accent)}
+  .botnav svg{width:20px;height:20px}
+  /* เว้นที่ให้แถบล่างไม่ทับเนื้อหาท้ายหน้า */
+  .wrap{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
+}
 .muted{color:var(--muted)}
 footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid var(--border);padding-top:12px}
 .pf-row input[type=number]{width:90px}
@@ -494,6 +507,21 @@ footer{color:var(--muted);font-size:.82rem;margin-top:24px;border-top:1px solid 
   <div class="row" style="margin-top:8px"><button class="btn small danger" id="btnWipe">ล้างข้อมูลทั้งหมดในเบราว์เซอร์นี้</button></div>
 </footer>
 </div>
+
+<nav class="mainnav botnav" aria-label="ส่วนหลัก">
+  <button data-sec="home">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 10 3l7 5.5V16a1 1 0 0 1-1 1h-3v-5H7v5H4a1 1 0 0 1-1-1z"/></svg>
+    หน้าแรก
+  </button>
+  <button data-sec="plan" class="active">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M3 15.5 L7 9.5 L11 12 L17 4"/><path d="M3 17.5 h14"/></svg>
+    วางแผน
+  </button>
+  <button data-sec="port">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="2.8" y="6" width="14.4" height="10.5" rx="1.6"/><path d="M7 6V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V6"/></svg>
+    พอร์ต
+  </button>
+</nav>
 
 <script src="vendor/chart.umd.min.js"></script>
 <script src="app.js"></script>
