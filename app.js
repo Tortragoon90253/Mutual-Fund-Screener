@@ -347,9 +347,14 @@ function sanitizeState(s){
   const fundIds = new Set(); funds.forEach(f=>{ while (fundIds.has(f.id)) f.id = uid(); fundIds.add(f.id); });
 
   // รูปแบบใหม่มี plans · รูปแบบเดิมมีโปรไฟล์ชุดเดียวที่ระดับบนสุด ให้ยกมาเป็นแผนแรก
-  let plans = Array.isArray(s.plans) && s.plans.length
-    ? s.plans.slice(0,20).map(pl=>sanitizePlan(pl, fundIds))
-    : [sanitizePlan({name:'แผนหลัก', profile:s.profile, weights:s.weights, portfolio:s.portfolio}, fundIds)];
+  // รายการที่ไม่ใช่อ็อบเจกต์ต้องทิ้ง ไม่ใช่แปลงเป็นแผนเปล่า — ไฟล์นำเข้าที่มี null ปนจะได้ไม่งอกแผนผีขึ้นมา
+  let plans = Array.isArray(s.plans)
+    ? s.plans.slice(0,20).filter(pl=>pl && typeof pl==='object').map(pl=>sanitizePlan(pl, fundIds))
+    : [];
+  // ต้องเหลืออย่างน้อยหนึ่งแผนเสมอ ถ้าปล่อยให้ว่าง plans[0].id ข้างล่างจะโยน error
+  // แล้ว try/catch ของ load() จะกลืนแล้วทิ้งข้อมูลผู้ใช้ทั้งชุด ซึ่งเป็นบั๊คที่เพิ่งแก้ไป
+  if (!plans.length)
+    plans = [sanitizePlan({name:'แผนหลัก', profile:s.profile, weights:s.weights, portfolio:s.portfolio}, fundIds)];
   const planIds = new Set(); plans.forEach(pl=>{ while (planIds.has(pl.id)) pl.id = uid(); planIds.add(pl.id); });
   const active = cleanStr(s.activePlan,16);
 
