@@ -182,7 +182,15 @@ function bindPlan(target){
     Object.defineProperty(target, k, {get:()=>activePlan()[k], configurable:true, enumerable:false}));
   return target;
 }
-function load(){ try{ return sanitizeState(JSON.parse(localStorage.getItem(KEY))); }catch(e){ return null; } }
+function load(){
+  try{ return sanitizeState(JSON.parse(localStorage.getItem(KEY))); }
+  catch(e){
+    // การคืน null ที่นี่แปลว่าทิ้งข้อมูลของผู้ใช้ทั้งชุดแล้วเริ่มใหม่จากศูนย์
+    // ถ้าเกิดจากบั๊คในตัว sanitize เอง มันจะเงียบสนิทจนไม่มีใครรู้ — ต้องร้องให้ได้ยิน
+    console.error('อ่านข้อมูลที่บันทึกไว้ไม่สำเร็จ ข้อมูลเดิมยังอยู่ใน localStorage แต่หน้าจอจะเริ่มจากค่าเริ่มต้น:', e);
+    return null;
+  }
+}
 function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
 function uid(){ return Math.random().toString(36).slice(2,10); }
 
@@ -330,7 +338,8 @@ function okBirth(d){
   if (typeof d!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
   const t = new Date(d+'T00:00:00Z');
   if (isNaN(t) || t.toISOString().slice(0,10)!==d) return false;
-  return d >= '1900-01-01' && d <= todayISO();
+  // ห้ามเรียก todayISO() ที่นี่ — มันเป็น const ที่ประกาศอยู่ล่างกว่าจุดที่ load() ทำงาน
+  return d >= '1900-01-01' && d <= new Date().toISOString().slice(0,10);
 }
 function sanitizeState(s){
   if (!s || typeof s!=='object' || !Array.isArray(s.funds)) return null;
