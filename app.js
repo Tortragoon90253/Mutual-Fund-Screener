@@ -546,7 +546,8 @@ function evaluate(f, p, w){
     // ราคาต่อหน่วยลดลงทุกครั้งที่จ่ายปันผล ตัวหารจึงเป็นราคาหลังจ่ายแล้ว ทำให้ตัวเลขดูสูงเกินจริง
     // และกองที่จ่ายระดับนี้มักคืนกำไรจากการขายทรัพย์สิน ไม่ใช่ดอกผลที่งอกใหม่
     if (dv.yield > 15) r.push(R('warn','ตัวเลขนี้สูงผิดปกติสำหรับปันผล — มักแปลว่ากองคืนเงินต้นหรือกำไรจากการขายทรัพย์สินออกมา ไม่ใช่รายได้ประจำ และราคาต่อหน่วยจะลดลงทุกครั้งที่จ่าย อย่าเทียบกับดอกเบี้ยเงินฝาก'));
-    else if (d && (f.sec && f.sec.projId)) r.push(R('warn','นโยบายระบุว่าจ่ายปันผล แต่ไม่พบประวัติการจ่ายใน 3 ปีล่าสุด'));
+    // ต้องเช็คว่าไม่มีรายการจ่ายจริงๆ — ถ้าเช็คแค่ว่าเป็นกองจาก ก.ล.ต. บรรทัดนี้จะโผล่ต่อท้ายตัวเลขปันผลจริงข้างบน
+    else if (d && (f.sec && f.sec.projId) && !(dv.pays && dv.pays.length)) r.push(R('warn','นโยบายระบุว่าจ่ายปันผล แต่ไม่พบประวัติการจ่ายใน 3 ปีล่าสุด'));
     C('c7', s, r); }
 
   // 8 liquidity
@@ -1125,10 +1126,15 @@ async function addSecFund(b){
     const fund = await secFetchFund(projId, cls, b.dataset.secsrc);
     const rec = sanitizeFund({...DEFAULT_FUND, ...fund, id:uid(), sample:false}); if (!rec) throw new Error('ข้อมูลกองทุนไม่ครบ');
     // ต้องเปิดฟอร์มด้วยตัวที่อยู่ใน state จริง ไม่ใช่ rec ที่มี id ใหม่ซึ่งถูกทิ้งไปตอนรวมกับของเดิม
+    // กองที่อยู่ในแผนอื่นแล้วต้องรวมแบบเดียวกับปุ่มอัปเดต — ถ้าเอา rec ทับตรงๆ ช่องว่างของ rec
+    // จะลบบันทึก ผลตอบแทนคาดหวัง และจำนวนหลักทรัพย์ที่ผู้ใช้กรอกเองไว้ทิ้งหมด
     let stored;
-    if (dup){ stored = sanitizeFund({...dup, ...rec, id:dup.id}) || dup;
-              state.funds[state.funds.indexOf(dup)] = stored; addToPlan(dup.id); }
-    else { stored = rec; state.funds.push(rec); addToPlan(rec.id); }
+    if (dup){ const i = state.funds.findIndex(x=>x.id===dup.id);
+              stored = mergeFund(state.funds[i], fund) || state.funds[i];
+              state.funds[i] = stored; addToPlan(dup.id); }
+    else { stored = rec;
+           if (secMode==='static' && secStatic && secStatic.generated) rec.syncedAt = secStatic.generated;
+           state.funds.push(rec); addToPlan(rec.id); }
     save(); renderFunds();
     refreshAddButtons();          // กองเดียวกันอาจอยู่ในแท็บอื่นและในผลค้นหาพร้อมกัน
     fillForm(stored); $('#fundForm').scrollIntoView({behavior:'smooth'});
@@ -1308,9 +1314,10 @@ $('#fundList').addEventListener('click', async e=>{
     try{
       const fund = await secFetchFund(old.sec.projId, old.sec.cls);
       // หาดัชนีหลัง await โหมด live รอหลายวินาที ผู้ใช้ลบกองอื่นทันจนดัชนีเลื่อนได้
+      // รวมเข้ากับตัวที่อยู่ใน state ตอนนี้ ไม่ใช่ old ก่อน await — ระหว่างรอผู้ใช้อาจแก้ฟอร์มกองนี้ไปแล้ว
       const i = state.funds.findIndex(x=>x.id===rf);
       if (i<0) return;
-      state.funds[i] = mergeFund(old, fund) || old;
+      state.funds[i] = mergeFund(state.funds[i], fund) || state.funds[i];
       save(); renderFunds();
     }catch(err){ alert('อัปเดตไม่สำเร็จ: '+err.message); renderFunds(); }
     return;

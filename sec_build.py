@@ -156,19 +156,7 @@ def fetch_all(path, params=None, retry_empty=True, quiet=False):
 
 
 # ---------------------------------------------------------------- collect
-def quarter_periods(back=3):
-    """งวดไตรมาสที่ปิดแล้ว ล่าสุดก่อน เป็น YYYYMM"""
-    today = date.today()
-    y, m = today.year, ((today.month - 1) // 3) * 3
-    if m == 0:
-        y, m = y - 1, 12
-    out = []
-    for _ in range(back):
-        out.append(f"{y}{m:02d}")
-        m -= 3
-        if m <= 0:
-            y, m = y - 1, m + 12
-    return out
+quarter_periods = sec.quarter_periods  # งวดไตรมาสที่ปิดแล้ว ใช้ตัวเดียวกับโหมดเครื่องตัวเอง
 
 
 def fetch_probe(path, params, max_pages):
@@ -366,8 +354,29 @@ def resolve(term, cls):
 
 
 def collect_watchlist():
-    """Watchlist mode: per-fund calls, only for the listed funds."""
-    out, errors, seen = [], [], set()
+    """Watchlist mode: per-fund calls, only for the listed funds.
+
+    ชุดที่ว่างของกองเดียวมักว่างจริง (กองไม่มีปันผล ไม่มีพอร์ตงวดนั้น) จึงไม่รอ 15 วินาทีลองซ้ำแบบการดึงรวม
+    และดึงต่อ proj_id ครั้งเดียว — กองหลายชนิดหน่วยได้ข้อมูลทั้งกองมาในการดึงครั้งเดียวอยู่แล้ว"""
+    out, errors, seen, by_fund = [], [], set(), {}
+
+    def fetch_fund_raw(pid):
+        get = lambda path, params: fetch_all(path, params, retry_empty=False)
+        raw = {}
+        for name, (path, _, dated) in sec.DATASETS.items():
+            raw[name] = get(path, {"proj_id": pid, "latest": "true" if dated else None})
+        today = date.today()
+        raw["divh"] = get("/v2/fund/daily-info/dividend-history", {"proj_id": pid})
+        for period in quarter_periods(3):
+            raw["port"] = get("/v2/fund/outstanding/portfolio",
+                              {"proj_id": pid, "start_period": period, "end_period": period})
+            if raw["port"]:
+                break
+        raw["nav"] = get("/v2/fund/daily-info/nav", {
+            "proj_id": pid, "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(),
+            "end_nav_date": today.isoformat()})
+        return raw
+
     for term, cls in read_watchlist():
         try:
             profiles = resolve(term, cls)
@@ -380,20 +389,9 @@ def collect_watchlist():
             if key in seen:
                 continue
             seen.add(key)
-            raw = {}
-            for name, (path, _, dated) in sec.DATASETS.items():
-                raw[name] = fetch_all(path, {"proj_id": p["proj_id"], "latest": "true" if dated else None})
-            today = date.today()
-            raw["divh"] = fetch_all("/v2/fund/daily-info/dividend-history", {"proj_id": p["proj_id"]})
-            for period in quarter_periods(3):
-                raw["port"] = fetch_all("/v2/fund/outstanding/portfolio",
-                                        {"proj_id": p["proj_id"], "start_period": period, "end_period": period})
-                if raw["port"]:
-                    break
-            raw["nav"] = fetch_all("/v2/fund/daily-info/nav", {
-                "proj_id": p["proj_id"], "start_nav_date": (today - timedelta(days=NAV_DAYS)).isoformat(),
-                "end_nav_date": today.isoformat()})
-            out.append((p, raw, []))
+            if p["proj_id"] not in by_fund:
+                by_fund[p["proj_id"]] = fetch_fund_raw(p["proj_id"])
+            out.append((p, by_fund[p["proj_id"]], []))
     return out, errors
 
 
