@@ -10,6 +10,7 @@ The browser cannot call api.sec.or.th directly (no CORS headers) and the key mus
 not live inside the HTML, so this script holds the key and relays the calls.
 Standard library only. Run:  py sec_server.py
 """
+import http.client
 import json
 import os
 import re
@@ -93,6 +94,10 @@ def api_get(path, params=None):
                 raise last
             except urllib.error.URLError as e:
                 last = ApiError(502, f"เชื่อมต่อ api.sec.or.th ไม่ได้: {e.reason}")
+            # หมดเวลาระหว่างอ่าน / ปลายทางตัดสาย / ได้ JSON ไม่ครบ ไม่ได้ห่อมาเป็น URLError
+            # ถ้าปล่อยหลุดไป build ทั้งรอบจะล้มด้วย traceback เพราะผู้เรียกดักแค่ ApiError
+            except (OSError, http.client.HTTPException, ValueError) as e:
+                last = ApiError(502, f"อ่านคำตอบจาก api.sec.or.th ไม่สำเร็จ: {type(e).__name__}")
         if last and last.status in (401, 403):
             break
         time.sleep(2 * (attempt + 1))
@@ -255,7 +260,8 @@ def factsheet_link(rows):
     """ลิงก์ Fact Sheet ฉบับล่าสุด — ใช้ของ บลจ. ก่อน ไม่มีจึงใช้สำเนาที่ ก.ล.ต. เก็บไว้"""
     newest = None
     for r in rows:
-        if (r.get("amc_url_factsheet") or r.get("pdf_factsheet")) and            (newest is None or (r.get("as_of_date") or "") > (newest.get("as_of_date") or "")):
+        if (r.get("amc_url_factsheet") or r.get("pdf_factsheet")) and \
+           (newest is None or (r.get("as_of_date") or "") > (newest.get("as_of_date") or "")):
             newest = r
     if not newest:
         return {}
@@ -543,10 +549,36 @@ def fetch_fund(proj_id, cls):
         raw[key] = safe(lambda: api_all(path, {"proj_id": proj_id, "latest": "true" if dated else None}),
                         notes, DATASET_LABELS[key])
     today = date.today()
+    # ขนาดกองคือผลรวมทุกชนิดหน่วย (fund_aum) จึงต้องดึง NAV ทั้งกอง ไม่กรองชนิด — ไม่งั้นโหมดนี้
+    # จะได้ขนาดกองแค่ชนิดเดียว ต่างจากข้อมูลบน GitHub Pages · ราคาต่อหน่วย pick() กรองชนิดให้เองอยู่แล้ว
     raw["nav"] = safe(lambda: api_all("/v2/fund/daily-info/nav", {
-        "proj_id": proj_id, "fund_class_name": cls if cls and cls != "main" else None,
+        "proj_id": proj_id,
         "start_nav_date": (today - timedelta(days=14)).isoformat(), "end_nav_date": today.isoformat()}), notes, "NAV")
+    # ประวัติปันผลและพอร์ตเต็มเหมือนที่ sec_build ดึง — ถ้าขาด การ์ดกองจะบอกว่า "ไม่พบประวัติปันผล" ทั้งที่จ่ายอยู่
+    raw["divh"] = safe(lambda: api_all("/v2/fund/daily-info/dividend-history", {"proj_id": proj_id}),
+                       notes, DATASET_LABELS["divh"])
+    for period in quarter_periods(3):
+        raw["port"] = safe(lambda: api_all("/v2/fund/outstanding/portfolio",
+                                           {"proj_id": proj_id, "start_period": period, "end_period": period}),
+                           notes, "พอร์ตเต็ม")
+        if raw["port"]:
+            break
     return assemble_fund(profile, cls, raw, notes)
+
+
+def quarter_periods(back=3):
+    """งวดไตรมาสที่ปิดแล้ว ล่าสุดก่อน เป็น YYYYMM"""
+    today = date.today()
+    y, m = today.year, ((today.month - 1) // 3) * 3
+    if m == 0:
+        y, m = y - 1, 12
+    out = []
+    for _ in range(back):
+        out.append(f"{y}{m:02d}")
+        m -= 3
+        if m <= 0:
+            y, m = y - 1, m + 12
+    return out
 
 
 def assemble_fund(profile, cls, raw, notes=None):
