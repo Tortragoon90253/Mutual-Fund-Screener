@@ -403,6 +403,22 @@ const fmtWhen = iso => { const d = new Date(iso);
 const TH_MON = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const monLabel = iso => { const d = new Date(iso+'T00:00:00Z');
   return TH_MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); };   // ค.ศ. ทั้งหมด ไม่ใช่ พ.ศ.
+/* ป้ายแกนนอนของกราฟเส้น: เว้นระยะเท่าๆ กันและต้องมีจุดแรกกับจุดสุดท้ายเสมอ ผู้ใช้จะได้เห็นว่าเริ่มปีไหน จบปีไหน
+   autoSkip ของ Chart.js มักตัดป้ายสุดท้ายทิ้ง แกนจึงดูเหมือนจบก่อนแผนจริงหลายปี
+   จำนวนป้ายคิดจากความกว้างของกราฟ (px = ที่ต่อหนึ่งป้าย) บนมือถือป้ายจะได้ไม่ทับกัน */
+function spreadTicks(axis, n, px){
+  if (n < 2){ axis.ticks = [{value:0}]; return; }
+  const want = Math.max(2, Math.floor((axis.width || 0) / px));
+  const step = Math.max(1, Math.ceil((n-1)/(want-1)));
+  const idx = [];
+  for (let i = 0; i < n-1; i += step) idx.push(i);
+  // ป้ายก่อนสุดท้ายที่ชิดป้ายสุดท้ายเกินไปจะทับกัน — ทิ้งตัวก่อนสุดท้าย แต่ห้ามทิ้งป้ายแรก
+  if (idx.length > 1 && n-1 - idx[idx.length-1] < step*0.75) idx.pop();
+  idx.push(n-1);
+  axis.ticks = idx.map(value=>({value}));
+}
+// ป้ายสองบรรทัด: บรรทัดบนคือวันที่/ปี บรรทัดล่างคืออายุ (ถ้าใส่วันเกิดไว้)
+const withAge = (label, age) => age!=null ? [label, `อายุ ${age}`] : label;
 const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
 const fmtB = n => Math.round(n).toLocaleString('th-TH') + ' ฿';
 const fmtShort = n => { const a=Math.abs(n); return a>=1e6 ? (n/1e6).toFixed(a>=1e7?1:2)+' ล้าน' : a>=1e3 ? Math.round(n/1e3).toLocaleString('th-TH')+' พัน' : Math.round(n).toString(); };
@@ -1973,6 +1989,9 @@ function renderOverview(){
     const futLab = series ? series.map((r,m)=>monLabel(futIso(m))) : [];
     const labels = past.length ? past.map(r=>monLabel(r.date)).concat(futLab.slice(1)) : futLab;
     const gap = n => Array(Math.max(0,n)).fill(null);
+    // แกนเป็นเดือนนับจากวันนี้ ส่วนช่วงอดีตมีวันที่จริงอยู่แล้ว จึงคิดอายุคนละทาง
+    const ageOf = i => past.length ? (i < past.length ? ageAt(past[i].date) : ageInMonths(i - (past.length-1)))
+                                   : ageInMonths(i);
     const ds = [];
     if (past.length) ds.push({label:'มูลค่าจริง', data: past.map(r=>r.value).concat(gap(labels.length-past.length)),
        borderColor:C.real, backgroundColor:C.real+'22', fill:true, tension:.15, pointRadius:0, borderWidth:2.6});
@@ -1987,26 +2006,13 @@ function renderOverview(){
     draw('ovChart', {type:'line',
       data:{labels, datasets:ds},
       options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
-        scales:{x:{grid:{color:C.grid}, ticks:{autoSkip:false, maxRotation:0},
-          // autoSkip เลือกป้ายเองแล้วมักตัดป้ายสุดท้ายทิ้ง แกนจึงดูเหมือนจบก่อนแผนจริงหลายปี
-          // เลือกเองให้ห่างเท่าๆ กันและบังคับให้มีวันสุดท้ายเสมอ เพราะนั่นคือวันที่แผนสุดท้ายครบกำหนด
-          afterBuildTicks: a => {
-            const n = labels.length, want = 8;
-            if (n < 2){ a.ticks = [{value:0}]; return; }
-            const step = Math.max(1, Math.round((n-1)/(want-1)));
-            const idx = [];
-            for (let i = 0; i < n-1; i += step) idx.push(i);
-            if (idx.length && n-1 - idx[idx.length-1] < step/2) idx.pop();   // ใกล้ป้ายสุดท้ายเกินไปจะทับกัน
-            idx.push(n-1);
-            a.ticks = idx.map(value=>({value}));
-          }},
+        scales:{x:{grid:{color:C.grid}, ticks:{autoSkip:false, maxRotation:0, callback:v=>withAge(labels[v], ageOf(v))},
+          // ป้ายสุดท้ายคือวันที่แผนสุดท้ายครบกำหนด จึงต้องมีเสมอ
+          afterBuildTicks: a => spreadTicks(a, labels.length, 78)},
                 y:{ticks:{callback:v=>fmtShort(v)},grid:{color:C.grid}}},
         plugins:{legend:{position:'bottom'},
           tooltip:{callbacks:{
-            // แกนเป็นเดือนนับจากวันนี้ ส่วนช่วงอดีตมีวันที่จริงอยู่แล้ว จึงคิดอายุคนละทาง
-            title:items=>{ const i = items[0].dataIndex;
-              const a = past.length ? (i < past.length ? ageAt(past[i].date) : ageInMonths(i - (past.length-1)))
-                                    : ageInMonths(i);
+            title:items=>{ const i = items[0].dataIndex, a = ageOf(i);
               return labels[i] + (a!=null ? ` · อายุ ${a} ปี` : ''); },
             label:c=>c.parsed.y==null?null:`${c.dataset.label}: ${fmtB(c.parsed.y)}`}}}}});
     // ต้องรอให้ Chart.js วาดจบก่อน ถึงจะรู้พิกัดของจุดสุดท้าย
@@ -2415,7 +2421,17 @@ function renderPlan(){
     ['ค่าธรรมเนียมรวม', fmtB(last.fees), `TER เฉลี่ยพอร์ต ${wTer.toFixed(2)}%`]
   ].map(([k,v,d])=>`<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join('');
 
-  $('#projSub').textContent = `ผลตอบแทนตลาดคาดหวังของพอร์ต ${wR.toFixed(1)}%/ปี (ก่อนหัก TER) · กรณีแย่/ดี = ผลตอบแทนเฉลี่ยต่อปีต่ำ/สูงกว่าคาด 1 ส่วนเบี่ยงเบน (σ/√${years}) ≈ ${(wR - wSd/Math.sqrt(years)).toFixed(1)}% / ${(wR + wSd/Math.sqrt(years)).toFixed(1)}% ต่อปี`;
+  // ปีที่ N ของแผนตรงกับปี ค.ศ. อะไรและอายุเท่าไร — ต้องรู้วันเริ่มจริงของแผน ซึ่ง planRun คำนวณให้แล้ว
+  // ถ้ายังไม่กำหนดวันเริ่มและยังไม่ได้ซื้อ ถือว่าเริ่มวันนี้ ตรงกับที่ช่อง "วันเริ่มลงทุน" บอกไว้
+  const setStart = planRun(activePlan()).start;
+  const s0 = new Date((setStart || todayISO())+'T00:00:00Z');
+  const ageInYear = y => ageAt(new Date(Date.UTC(s0.getUTCFullYear()+y, s0.getUTCMonth(), s0.getUTCDate())).toISOString().slice(0,10));
+  const labels = mid.map(r=>String(s0.getUTCFullYear()+r.year));    // ค.ศ. ไม่ใช่ พ.ศ.
+  const a0 = ageInYear(0), aN = ageInYear(years);
+  $('#projSub').textContent = `ช่วงเวลา ค.ศ. ${labels[0]}–${labels.at(-1)}`
+    + (a0!=null ? ` (อายุ ${a0}–${aN} ปี)` : ' · ใส่วันเกิดที่ปุ่ม "อายุ" ด้านบน เพื่อดูอายุในแต่ละปี')
+    + (setStart ? '' : ' · ยังไม่กำหนดวันเริ่มลงทุน จึงนับจากวันนี้')
+    + ` · ผลตอบแทนตลาดคาดหวังของพอร์ต ${wR.toFixed(1)}%/ปี (ก่อนหัก TER) · กรณีแย่/ดี = ผลตอบแทนเฉลี่ยต่อปีต่ำ/สูงกว่าคาด 1 ส่วนเบี่ยงเบน (σ/√${years}) ≈ ${(wR - wSd/Math.sqrt(years)).toFixed(1)}% / ${(wR + wSd/Math.sqrt(years)).toFixed(1)}% ต่อปี`;
 
   const C = {bad:css('--c-bad'), mid:css('--c-mid'), good:css('--c-good'), pr:css('--c-principal'), real:css('--c-real'), grid:css('--grid'), text:css('--muted')};
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
@@ -2425,15 +2441,11 @@ function renderPlan(){
   const baseOpts = {responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false},
     plugins:{legend:{position:'bottom',labels:{boxWidth:12,usePointStyle:true}},
       tooltip:{...tip, callbacks:{...tip.callbacks,
-        title:items=>{ const a = ageInYear(items[0].dataIndex);
-          return labels[items[0].dataIndex] + (a!=null ? ` · อายุ ${a} ปี` : ''); }}}},
-    scales:{x:{grid:{display:false}}, y:{grid:{color:C.grid}, ticks:moneyTick, beginAtZero:true}}};
-  const labels = mid.map(r=>'ปี '+r.year);
-  // ปีที่ N ของแผนนี้ตรงกับอายุเท่าไร — ต้องรู้วันเริ่มจริงของแผน ซึ่ง planRun คำนวณให้แล้ว
-  const planStart = planRun(activePlan()).start;
-  const ageInYear = y => { if (!planStart) return null;
-    const d = new Date(planStart+'T00:00:00Z');
-    return ageAt(new Date(Date.UTC(d.getUTCFullYear()+y, d.getUTCMonth(), d.getUTCDate())).toISOString().slice(0,10)); };
+        title:items=>{ const i = items[0].dataIndex, a = ageInYear(i);
+          return `${i ? `ปีที่ ${i}` : 'เริ่ม'} · ค.ศ. ${labels[i]}` + (a!=null ? ` · อายุ ${a} ปี` : ''); }}}},
+    scales:{x:{grid:{display:false}, ticks:{autoSkip:false, maxRotation:0, callback:v=>withAge(labels[v], ageInYear(v))},
+               afterBuildTicks: a => spreadTicks(a, labels.length, 60)},
+            y:{grid:{color:C.grid}, ticks:moneyTick, beginAtZero:true}}};
   const line = (label, data, color, extra={}) => ({label, data, borderColor:color, backgroundColor:color, pointRadius:years>20?0:2, borderWidth:2, tension:.2, ...extra});
 
   const ds = [
@@ -2455,7 +2467,9 @@ function renderPlan(){
   draw('chCmp', {type:'bar', data:{labels:['กรณีแย่','กรณีกลาง','กรณีดี'], datasets:[
       {label:'ก้อนเดียว', data:cmp.map(c=>c[0]), backgroundColor:C.mid, borderRadius:4},
       {label:'DCA', data:cmp.map(c=>c[1]), backgroundColor:C.good, borderRadius:4}]},
-    options:{...baseOpts, scales:{x:{grid:{display:false}}, y:{grid:{color:C.grid}, ticks:moneyTick, beginAtZero:true}}}});
+    // กราฟแท่งนี้แกนนอนเป็นกรณี ไม่ใช่ปี จึงไม่ใช้หัวข้อ tooltip แบบปี/อายุของกราฟเส้น
+    options:{...baseOpts, plugins:{...baseOpts.plugins, tooltip:tip},
+             scales:{x:{grid:{display:false}}, y:{grid:{color:C.grid}, ticks:moneyTick, beginAtZero:true}}}});
 
   // fee impact
   const cheap = simulate({lump, monthly, dcaMonths:dcaN, years, legs, z:0, terOverride:0.2, noLoad:true});
@@ -2466,9 +2480,9 @@ function renderPlan(){
       line('ถ้า TER 0.2% ไม่มีค่าซื้อขาย', cheap.map(r=>r.value), C.good, {borderDash:[6,4]})]}, options:baseOpts});
 
   // table
-  const ageCol = ageInYear(0) != null;
-  $('#yearTable').innerHTML = `<thead><tr><th>ปี</th>${ageCol?'<th class="num">อายุ</th>':''}<th class="num">เงินต้นสะสม</th><th class="num">กรณีแย่</th><th class="num">กรณีกลาง</th><th class="num">กรณีดี</th><th class="num">กลาง (หลังเงินเฟ้อ)</th><th class="num">ค่าธรรมเนียมสะสม</th></tr></thead><tbody>${
-    mid.map((r,i)=>`<tr><td>${r.year}</td>${ageCol?`<td class="num">${ageInYear(r.year)}</td>`:''}<td class="num">${fmtB(r.principal)}</td><td class="num">${fmtB(bad[i].value)}</td><td class="num"><b>${fmtB(r.value)}</b></td><td class="num">${fmtB(good[i].value)}</td><td class="num">${fmtB(real[i])}</td><td class="num">${fmtB(r.fees)}</td></tr>`).join('')}</tbody>`;
+  const ageCol = a0 != null;
+  $('#yearTable').innerHTML = `<thead><tr><th>ปี</th><th class="num">ค.ศ.</th>${ageCol?'<th class="num">อายุ</th>':''}<th class="num">เงินต้นสะสม</th><th class="num">กรณีแย่</th><th class="num">กรณีกลาง</th><th class="num">กรณีดี</th><th class="num">กลาง (หลังเงินเฟ้อ)</th><th class="num">ค่าธรรมเนียมสะสม</th></tr></thead><tbody>${
+    mid.map((r,i)=>`<tr><td>${r.year}</td><td class="num">${labels[i]}</td>${ageCol?`<td class="num">${ageInYear(r.year)}</td>`:''}<td class="num">${fmtB(r.principal)}</td><td class="num">${fmtB(bad[i].value)}</td><td class="num"><b>${fmtB(r.value)}</b></td><td class="num">${fmtB(good[i].value)}</td><td class="num">${fmtB(real[i])}</td><td class="num">${fmtB(r.fees)}</td></tr>`).join('')}</tbody>`;
 
   // advice
   const adv = [];
